@@ -30,7 +30,7 @@ sudo udevadm control -R && sudo udevadm trigger
 
 ### Why the patch?
 
-The Palm's firehose loader sends read data without first sending the `rawmode="true"` response that stock edl waits for, so reads hang at "Trying to read first storage sector…". The `--skipresponse` flag fixes reads, but applied to writes it leaves a stray ACK in the pipe that wedges the next session. The patch makes reads always skip the response and leaves writes alone, so you can run **without** `--skipresponse`. It also fixes a str/bytes crash in `cmd_read_buffer`.
+The Palm's firehose loader sends read data without first sending the `rawmode="true"` response that stock edl waits for, so reads hang at "Trying to read first storage sector…". The `--skipresponse` flag fixes reads, but applied to writes it leaves a stray ACK in the pipe that wedges the next session. The patch makes reads skip the response when the sector size is 512 (keeping the stock 4096-byte probe that `reset` relies on) and leaves writes alone, so you can run **without** `--skipresponse`. It also fixes a str/bytes crash in `cmd_read_buffer`.
 
 ## 2. Enter EDL and check the partition table
 
@@ -60,7 +60,7 @@ To restore any partition later: `uv run edl.py w <name> ~/palm-backup/<name>.bin
 uv run edl.py reset
 ```
 
-If that hangs (it often does after a read or write), **hold the power button for about 15 seconds**.
+If that hangs, hold the power button for about 15 seconds. That worked on one phone but not on another. If the screen stays black, the phone is still in EDL, so see [troubleshooting](troubleshooting.md#power-button-does-nothing-and-the-screen-stays-black).
 
 ## 5. Patch boot with Magisk (on the phone, no UI needed)
 
@@ -99,7 +99,7 @@ Then hold power for about 15 seconds to reboot.
 ## 7. First boot
 
 1. You'll see an orange "different OS" warning. That's normal, and `ro.boot.verifiedbootstate` now reads `yellow`.
-2. The phone asks for a **password** to start Android. That's the encryption breaking, as expected. Hold power until it's off, hold it again through the restarts to reach recovery, then choose **Wipe data/factory reset** → **Reboot system now**.
+2. The phone asks for a **password** to start Android. That's the encryption breaking, as expected. Hold power until it's off, then hold it again through the restarts. You'll land on a **"No command"** screen first. Keep pressing and holding power until the recovery menu appears (see [troubleshooting](troubleshooting.md#stuck-on-a-no-command-screen-android-lying-on-its-back)), then choose **Wipe data/factory reset** → **Reboot system now**.
 3. Set the phone up, turn USB debugging back on, and reinstall the Magisk app (`adb install Magisk-v31.1.apk`). Open it and accept the reboot it asks for.
 4. Run `adb shell su -c id`. If it returns "Permission denied", open Magisk → **Superuser** tab and switch on **Shell**.
 
