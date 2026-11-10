@@ -12,7 +12,7 @@ $ADB shell 'su -c "test -e /sys/class/power_supply/battery/battery_charging_enab
 
 $ADB push charge_limit.sh /data/local/tmp/charge_limit.sh >/dev/null
 $ADB shell 'su -c "mkdir -p /data/adb/service.d && cp /data/local/tmp/charge_limit.sh /data/adb/service.d/charge_limit.sh && chmod 755 /data/adb/service.d/charge_limit.sh"'
-$ADB shell 'su -c "pkill -f service.d/charge_limit.sh; (nohup sh /data/adb/service.d/charge_limit.sh >/dev/null 2>&1 &)"' || true
+$ADB shell 'su -c "nohup sh /data/adb/service.d/charge_limit.sh >/dev/null 2>&1 &"' || true
 sleep 3
 $ADB shell 'su -c "tail -n 5 /data/adb/charge_limit.log"'
 echo "Installed. It will start automatically on every boot."
