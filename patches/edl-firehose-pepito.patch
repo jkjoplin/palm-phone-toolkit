@@ -1,0 +1,24 @@
+diff --git a/edlclient/Library/firehose.py b/edlclient/Library/firehose.py
+index fc55169..e5d0a3f 100755
+--- a/edlclient/Library/firehose.py
++++ b/edlclient/Library/firehose.py
+@@ -670,7 +670,7 @@ class firehose(metaclass=LogBase):
+                f" start_sector=\"{start_sector}\""
+         data += self.nand_pages_attr() + "/>\n</data>"
+ 
+-        rsp = self.xmlsend(data, self.skipresponse)
++        rsp = self.xmlsend(data, True)
+         self.cdc.xmlread = False
+         time.sleep(0.01)
+         if not rsp.resp:
+@@ -732,8 +732,8 @@ class firehose(metaclass=LogBase):
+         data += self.nand_pages_attr() + "/>\n</data>"
+ 
+         progbar = progress(self.cfg.SECTOR_SIZE_IN_BYTES)
+-        rsp = self.xmlsend(data, self.skipresponse)
+-        if "value" in rsp.data and rsp.data["value"] == "NAK":
++        rsp = self.xmlsend(data, True)
++        if isinstance(rsp.data, dict) and "value" in rsp.data and rsp.data["value"] == "NAK":
+             return rsp
+         self.cdc.xmlread = False
+         resData = bytearray()
