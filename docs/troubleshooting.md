@@ -1,5 +1,24 @@
 # Troubleshooting
 
+## Setup stuck on "Initializing… please wait while we prepare your Palm"
+Seen on the final firmware (build `v3C3M`, April 2021 patch) with no SIM inserted. The hang is in Palm's setup add-on, `com.ts.setupwizard.overlay/.ui.UiccActivity`, which waits on a SIM/carrier check that never finishes. A factory reset doesn't help. The older `v1AGN` build doesn't have this step.
+
+If you can get adb, the fix takes three commands and can be undone with `pm enable`:
+
+```bash
+adb shell settings put global device_provisioned 1
+adb shell settings put secure user_setup_complete 1
+adb shell pm disable-user --user 0 com.ts.setupwizard.overlay
+```
+
+The normal Android welcome screen then appears, and setup completes. Inserting any working SIM may also get you past it (untested).
+
+**Getting adb on a phone stuck in setup.** USB debugging can't be turned on from the UI, so we added these to the boot image's ramdisk (on top of the Magisk patch, using `magiskboot cpio`):
+- In `init.rc`: `on post-fs-data` → `setprop persist.sys.usb.config mtp,adb`
+- `/adb_keys`: your computer's `~/.android/adbkey.pub`. This pre-authorizes only your own computer, the same as tapping "Always allow". adb authentication stays on.
+
+Flash that image, finish setup, and then reflash the plain Magisk image if you don't want USB debugging forced on.
+
 ## edl hangs at "Trying to read first storage sector…"
 The loader sends data before its response. Apply [the patch](../patches/edl-firehose-pepito.patch), or pass `--skipresponse` for read-only commands. Also pass `--memory=eMMC --sectorsize=512`.
 

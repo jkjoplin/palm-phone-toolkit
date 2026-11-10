@@ -29,7 +29,8 @@ Palm (the company) is gone, and the phone is stuck on Android 8.1 and a 2019 sec
 
 | Model | Backup | Root | Charge limit |
 | --- | --- | --- | --- |
-| PVG100 (US / Verizon) | ✅ | ✅ Magisk 31.1 | ✅ |
+| PVG100 (US / Verizon), build v1AGN (2019-03) | ✅ | ✅ Magisk 31.1 | ✅ |
+| PVG100 (US / Verizon), build v3C3M (2021-04) | ✅ | ✅ Magisk 31.1 (patched on Linux) | see [setup hang](docs/troubleshooting.md#setup-stuck-on-initializing-please-wait-while-we-prepare-your-palm) |
 | PVG100E (international) | Untested here; see [3ch0less/pvg100e-root](https://github.com/3ch0less/pvg100e-root) | | |
 
 Tested a different model or a different method? Please open a PR and add a row.
