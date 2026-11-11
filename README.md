@@ -2,7 +2,7 @@
 
 Notes, fixes and scripts for giving the 2018 **Palm phone** (TCL-made, model PVG100 / PVG100E, codename `pepito`) a second life as a tiny smart-home display, controller or sensor.
 
-Palm (the company) is gone, and the phone is stuck on Android 8.1 and a 2019 security patch. It's still a nice little device: a 3.3" 720p screen, Wi-Fi, NFC, a camera, and a size that fits on a wall, a desk or next to a 3D printer.
+Palm (the company) is gone, and the phone is stuck on Android 8.1 and a 2019 security patch. It's still a nice little device: a 3.3" 720p LCD screen, Wi-Fi, proximity and light sensors, a camera, and a size that fits on a wall, a desk or next to a 3D printer.
 
 > **Warning:** rooting this phone means writing to its flash over Qualcomm EDL. Flashing the wrong model's firmware has bricked units. **Take a full backup first.** You use everything here at your own risk.
 
