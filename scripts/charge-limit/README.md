@@ -28,7 +28,8 @@ Create `/data/adb/charge_limit.conf` to override the defaults. Changes are picke
 LOW=40     # resume charging at or below this %
 HIGH=80    # stop charging at or above this %
 HOT=420    # pause at or above 42.0 °C (tenths of a degree)
-COOL=380   # only resume once at or below 38.0 °C
+COOL=380   # after a heat pause, resume once at or below 38.0 °C
+FLOOR=25   # under this %, charge even while warm (never at HOT or above)
 ```
 
 ## Check it

@@ -1,7 +1,8 @@
 #!/system/bin/sh
 # Palm battery guard: keep charge between LOW and HIGH, pause charging when hot.
-# Tunables live in /data/adb/charge_limit.conf (LOW=, HIGH=, HOT=, COOL=).
+# Tunables live in /data/adb/charge_limit.conf (LOW=, HIGH=, HOT=, COOL=, FLOOR=).
 LOW=40; HIGH=80; HOT=420; COOL=380   # temps in tenths of a degree C
+FLOOR=25                             # below this, charge even while warm (but never at HOT or above)
 B=/sys/class/power_supply/battery
 SW=$B/battery_charging_enabled
 LOG=/data/adb/charge_limit.log
@@ -14,15 +15,20 @@ if [ -n "$old" ] && [ "$old" != "$$" ] && grep -q charge_limit /proc/$old/cmdlin
 fi
 echo $$ > $PIDF
 until [ "$(getprop sys.boot_completed)" = 1 ]; do sleep 5; done
+hot=0
 log "started"
 while true; do
   [ -f /data/adb/charge_limit.conf ] && . /data/adb/charge_limit.conf
   cap=$(cat $B/capacity); t=$(cat $B/temp); cur=$(cat $SW)
   want=$cur
-  if [ "$t" -ge "$HOT" ]; then want=0
+  # Heat pause with hysteresis: start at HOT, end at COOL.
+  if [ "$t" -ge "$HOT" ]; then hot=1; elif [ "$t" -le "$COOL" ]; then hot=0; fi
+  if [ "$hot" = 1 ]; then want=0
   elif [ "$cap" -ge "$HIGH" ]; then want=0
-  elif [ "$cap" -le "$LOW" ] && [ "$t" -le "$COOL" ]; then want=1
+  elif [ "$cap" -le "$LOW" ]; then want=1
   fi
+  # Never let a warm phone drain to shutdown: under FLOOR, charge unless it is actually HOT.
+  if [ "$cap" -le "$FLOOR" ] && [ "$t" -lt "$HOT" ]; then want=1; fi
   if [ "$want" != "$cur" ]; then echo $want > $SW; log "cap=$cap temp=$t charging=$want"; fi
   sleep 60
 done
