@@ -11,8 +11,16 @@
                                  [--outside SECONDS] [--initial wind_down] [--previous lights_out]
                                  [--temp-entity sensor.bedroom_temperature] [--speed 1]
                                  [--moods ha/packages/moods] [--clock HH:MM] [--quiet]
+                                 [--cards ui/dev/fixtures/custom-cards.json] [--card-set empty] [--old-house]
    --clock pins the house's local time (hours and minutes) that mood time windows (mood_window) are
    checked against, so a test is the same whenever it runs; without it the real clock is used.
+   Custom moods: the six slot scripts (script.mood_custom_<n>, customize mood_slot) come from the
+   package (moods_custom.yaml), every helper the package defines is created as Home Assistant creates
+   it (input_select: its first option, input_number: its min, input_text: unknown, input_boolean: off),
+   and sensor.moods_custom_<n> carries the cards of --card-set from --cards (default: "empty", every
+   slot empty, as on day one). A slot runs its card's steps with the runner's rules (sim.js, with
+   gen-custom.js's tables). --old-house leaves all of that out (no slot scripts, no card sensors, no
+   custom_mood_* helpers and no _where/_order helpers): a house from before custom moods.
 
    Control (plain HTTP on the same port, for test drivers):
      GET /control/state                  current mood, previous, connections, entity states
@@ -21,7 +29,9 @@
      GET /control/stall?ms=40000         the sockets open now stop answering (pings included) for ms and stay
                                          open: a half-open link. Sockets opened meanwhile work normally
      GET /control/lag?ms=10000&for=2000  what the sockets open now send during the next `for` ms reaches the phone ms
-                                         late (in order); the phone's messages still reach HA at once. New sockets are not lagged
+                                         late (in order); the phone's messages still reach HA at once. New sockets are not lagged.
+                                         &after=result: the window starts once the next call's result has gone out on time
+                                         (the answer arrives, the state diffs HA writes after it do not), as TCP would
      GET /control/refuse?ms=5000         refuse new connections for ms (simulates HA restarting)
      GET /control/outside?slug=focus     something else (voice, the other phone) sets a mood; no slug = random
      GET /control/never?entity=ID        this entity never answers ('' for none)
@@ -34,13 +44,23 @@
                                          (default: the folder loaded at start)
      GET /control/noop?entity=ID&on=1    that mood script runs but never calls mood_begin (a file missing its
                                          first two steps): the call succeeds and house_mood never moves
-     GET /control/clock?at=HH:MM         pin the house clock the mood time windows read (at= empty: real time) */
+     GET /control/clock?at=HH:MM         pin the house clock the mood time windows read (at= empty: real time)
+     POST /control/cards                 replace custom mood cards. JSON body {"<slot>": V}: V is a variant name from
+                                         the --cards file (e.g. "reading"), {"state": S, "card": C} (C any JSON), or
+                                         null (the sensor is removed). Slots not named are left as they are.
+                                         GET or POST ?set=NAME: every slot from that set of the file.
+                                         GET or POST ?slot=N&raw=TEXT[&state=ready]: the card attribute is that text
+                                         GET or POST ?slot=N&state=unavailable: unavailable, and the card attribute
+                                         goes (as Home Assistant does for a template entity that fails)
+     GET /control/actions                what the custom mood runner did, as service calls (?clear=1 empties it) */
 'use strict';
 const http = require('http');
 const crypto = require('crypto');
 const path = require('path');
+const fs = require('fs');
 const HouseSim = require('../sim.js');
-const { loadMoods, loadHelpers } = require('./mood-yaml');
+const G = require('./gen-custom');
+const { loadMoods, loadHelpers, readMoodFile, readSection } = require('./mood-yaml');
 
 const args = process.argv.slice(2);
 function opt(name, def) { const i = args.indexOf('--' + name); return i >= 0 && args[i + 1] !== undefined && !args[i + 1].startsWith('--') ? args[i + 1] : (i >= 0 ? true : def); }
@@ -56,17 +76,76 @@ function houseClock() { const d = new Date(); if (pinned) d.setHours(+pinned[1],
 
 function log(m) { if (!QUIET) console.log(new Date().toISOString().slice(11, 23) + ' ' + m); }
 
-const moods = loadMoods(MOODS_DIR);
+const OLD_HOUSE = !!opt('old-house', false);
+const CARDS_FILE = path.resolve(String(opt('cards', path.join(__dirname, 'fixtures', 'custom-cards.json'))));
+const CARDS = JSON.parse(fs.readFileSync(CARDS_FILE, 'utf8'));
+const CARD_SET = String(opt('card-set', 'empty'));
+// an entity a house from before custom moods does not have
+const NEW_ID = /^(input_\w+\.custom_mood_\d+_|input_select\.moods_\w+_where$|input_number\.moods_\w+_order$|sensor\.moods_custom_|script\.mood_custom_)/;
+
+/* the custom mood slot scripts: the customize entries with mood_slot (and no mood: true) */
+function loadSlots(dir) {
+  if (OLD_HOUSE) return [];
+  const out = [];
+  fs.readdirSync(dir).filter((f) => /\.ya?ml$/.test(f)).sort().forEach((f) => {
+    const r = readMoodFile(fs.readFileSync(path.join(dir, f), 'utf8'));
+    Object.keys(r.customize).forEach((id) => {
+      const a = r.customize[id];
+      if (!a || a.mood === true || a.mood_slot == null || !/^script\.mood_custom_\d+$/.test(id)) return;
+      const s = r.scripts[id.replace(/^script\./, '')] || {};
+      out.push({ entity_id: id, attributes: a, alias: s.alias, icon: s.icon, file: f });
+    });
+  });
+  return out;
+}
+const allMoods = (dir) => loadMoods(dir).concat(loadSlots(dir));
+
+/* sensor.moods_custom_<n> as Home Assistant has it: state, card, and the templated name */
+function cardEntity(n, v) {
+  const c = v && v.card, name = c && typeof c === 'object' && typeof c.mood_name === 'string' ? c.mood_name : 'Custom mood ' + n;
+  const fn = v && v.state === 'empty' ? 'Custom mood ' + n + ' (empty)' : name;
+  return { entity_id: 'sensor.moods_custom_' + n, state: String(v.state), attributes: { card: c, friendly_name: fn, icon: 'mdi:palette-swatch-outline' } };
+}
+function variant(n, v) {
+  if (typeof v === 'string') { const x = (CARDS.variants[String(n)] || {})[v]; if (!x) throw new Error('no card variant "' + v + '" for slot ' + n + ' in ' + CARDS_FILE); return x; }
+  return v;
+}
+function setCards() {
+  if (OLD_HOUSE) return [];
+  const set = CARDS.sets[CARD_SET];
+  if (!set) throw new Error('no card set "' + CARD_SET + '" in ' + CARDS_FILE);
+  return Object.keys(set).map((n) => cardEntity(n, variant(n, set[n])));
+}
+
+const moods = allMoods(MOODS_DIR);
 log('loaded ' + moods.length + ' moods from ' + MOODS_DIR + ': ' + moods.map((m) => m.entity_id.replace(/^script\.mood_/, '')).join(', '));
 const sim = new HouseSim({
   moods, token: TOKEN, never: String(opt('never', 'light.role_patio_lights')) === 'true' ? '' : String(opt('never', 'light.role_patio_lights')),
   initial: String(opt('initial', 'wind_down')), previous: String(opt('previous', 'lights_out')),
-  tempEntity: TEMP_ENTITY, temp: 68, speed: +opt('speed', 1), log, clock: houseClock
+  tempEntity: TEMP_ENTITY, temp: 68, speed: +opt('speed', 1), log, clock: houseClock,
+  extras: setCards(), tables: G.TABLES
 });
 // the settings helpers (moods_settings.yaml) at their first option, as Home Assistant creates them
 const helpers = loadHelpers(MOODS_DIR);
-Object.keys(helpers).forEach((id) => { const h = helpers[id]; if (Array.isArray(h.options) && h.options.length) sim.set(id, String(h.options[0]), { friendly_name: h.name || id, options: h.options.map(String), icon: h.icon }); });
-log('settings helpers: ' + Object.keys(helpers).length);
+Object.keys(helpers).forEach((id) => { const h = helpers[id]; if (OLD_HOUSE && NEW_ID.test(id)) return; if (Array.isArray(h.options) && h.options.length) sim.set(id, String(h.options[0]), { friendly_name: h.name || id, options: h.options.map(String), icon: h.icon }); });
+// every other helper the package defines, as Home Assistant creates one with no `initial:` (input_number
+// at its min, input_text unknown, input_boolean off); the house's own (house_mood ...) are left alone
+let more = 0;
+fs.readdirSync(MOODS_DIR).filter((f) => /\.ya?ml$/.test(f)).sort().forEach((f) => {
+  const text = fs.readFileSync(path.join(MOODS_DIR, f), 'utf8');
+  [['input_number', (h) => String(h.initial != null ? h.initial : (h.min != null ? h.min : 0))], ['input_text', (h) => (h.initial != null ? String(h.initial) : 'unknown')],
+   ['input_boolean', (h) => (h.initial === true ? 'on' : 'off')]].forEach(([dom, first]) => {
+    const sec = readSection(text, dom);
+    Object.keys(sec).forEach((k) => {
+      const id = dom + '.' + k, h = sec[k] || {};
+      if (sim.states[id] || (OLD_HOUSE && NEW_ID.test(id))) return;
+      const a = { friendly_name: h.name || id, icon: h.icon };
+      ['min', 'max', 'step', 'mode', 'unit_of_measurement'].forEach((x) => { if (h[x] != null) a[x] = h[x]; });
+      sim.set(id, first(h), a); more++;
+    });
+  });
+});
+log('settings helpers: ' + Object.keys(helpers).length + ' input_select, ' + more + ' others' + (OLD_HOUSE ? ' (old house: no custom moods, no placement)' : '; custom mood cards: set "' + CARD_SET + '"'));
 if (OUTSIDE_S > 0) setInterval(() => { const id = sim.outside(); log('outside change on a timer -> ' + id); }, OUTSIDE_S * 1000);
 
 /* ---------- WebSocket framing (RFC 6455, server side) ---------- */
@@ -86,7 +165,7 @@ const sockets = new Set();
 // fine, so it gets auth_required and everything else at once, exactly as real HA would.
 let stallUntil = 0, refuseUntil = 0;
 const stalled = new Map();   // socket -> time its stall ends
-const lagged = new Map();    // socket -> { until, ms }: outbound messages sent before `until` arrive `ms` late
+const lagged = new Map();    // socket -> { until, ms, wait }: outbound messages sent before `until` arrive `ms` late; wait: start after the next result
 
 function accept(req, socket) {
   if (Date.now() < refuseUntil) { socket.destroy(); return; }
@@ -107,7 +186,10 @@ function accept(req, socket) {
   const send = (obj) => {
     const txt = JSON.stringify(obj);
     const write = () => { if (!closed && !socket.destroyed) socket.write(frame(1, Buffer.from(txt))); };
-    const L = lagged.get(socket), lag = L && Date.now() < L.until ? L.ms : 0;
+    const L = lagged.get(socket);
+    // after=result: the next result goes out on time and opens the window; what follows waits behind it
+    if (L && L.wait) { if (obj.type === 'result') { L.wait = false; L.until = Date.now() + L.for; } if (lastAt <= Date.now()) { write(); return; } }
+    const lag = L && !L.wait && Date.now() < L.until ? L.ms : 0;
     if (!lag && lastAt <= Date.now()) { write(); return; }
     lastAt = Math.max(lastAt, Date.now() + lag);
     setTimeout(write, lastAt - Date.now());
@@ -169,10 +251,10 @@ const server = http.createServer((req, res) => {
       return json({ until: stallUntil, sockets: stalled.size });
     }
     case '/control/lag': {
-      const ms = +q.ms || 10000, until = Date.now() + (+q.for || 2000);
-      sockets.forEach((s) => lagged.set(s, { until, ms }));
-      log('lagging what ' + sockets.size + ' open socket(s) send for ' + (+q.for || 2000) + ' ms by ' + ms + ' ms; new sockets are not lagged');
-      return json({ until, ms, sockets: sockets.size });
+      const ms = +q.ms || 10000, len = +q.for || 2000, wait = q.after === 'result', until = Date.now() + len;
+      sockets.forEach((s) => lagged.set(s, { until, ms, for: len, wait }));
+      log('lagging what ' + sockets.size + ' open socket(s) send for ' + len + ' ms by ' + ms + ' ms' + (wait ? ', from the next result on' : '') + '; new sockets are not lagged');
+      return json({ until, ms, wait, sockets: sockets.size });
     }
     case '/control/refuse': { refuseUntil = Date.now() + (+q.ms || 5000); log('refusing connections for ' + (+q.ms || 5000) + ' ms'); return json({ until: refuseUntil }); }
     case '/control/outside': { const id = sim.outside(q.slug); log('outside change -> ' + id); return json({ ran: id }); }
@@ -183,7 +265,7 @@ const server = http.createServer((req, res) => {
     case '/control/reload': {
       // script.reload after the mood files changed: ?dir= another folder of mood files (default: the one loaded at start)
       const dir = q.dir ? path.resolve(q.dir) : MOODS_DIR;
-      const fresh = loadMoods(dir);
+      const fresh = allMoods(dir);
       const n = sim.reloadMoods(fresh);
       log('reloaded ' + n + ' moods from ' + dir);
       return json({ moods: fresh.map((m) => m.entity_id.replace(/^script\.mood_/, '')) });
@@ -196,6 +278,30 @@ const server = http.createServer((req, res) => {
       return json({ clock: pinned ? pinned[0] : 'real' });
     }
     case '/control/temp': { sim.setTemp(q.entity || TEMP_ENTITY, q.value); return json({ ok: true }); }
+    case '/control/actions': { const a = sim.actions.slice(); if (q.clear) sim.actions.length = 0; return json(a); }
+    case '/control/cards': {
+      let body = '';
+      req.on('data', (d) => { body += d; if (body.length > 1e6) req.destroy(); });
+      req.on('end', () => {
+        try {
+          const done = [];
+          const put = (n, v) => {
+            const id = 'sensor.moods_custom_' + n;
+            if (v === null) { sim.remove(id); done.push(n + ': removed'); return; }
+            const e = cardEntity(n, variant(n, v));
+            sim.set(id, e.state, e.attributes);
+            done.push(n + ': ' + e.state);
+          };
+          if (q.set) { const set = CARDS.sets[q.set]; if (!set) throw new Error('no set ' + q.set); Object.keys(set).forEach((n) => put(n, set[n])); }
+          else if (q.slot && q.raw !== undefined) { const id = 'sensor.moods_custom_' + q.slot; sim.set(id, q.state || 'ready', { card: q.raw }); done.push(q.slot + ': raw'); }
+          else if (q.slot && q.state) { const id = 'sensor.moods_custom_' + q.slot; sim.set(id, q.state, null, q.state === 'unavailable' || q.state === 'unknown' ? ['card'] : null); done.push(q.slot + ': ' + q.state); }
+          else { const o = JSON.parse(body || '{}'); Object.keys(o).forEach((n) => put(n, o[n])); }
+          log('cards: ' + done.join(', '));
+          json({ ok: true, done });
+        } catch (e) { json({ error: e.message }, 400); }
+      });
+      return;
+    }
     default: res.writeHead(404); res.end('fake Home Assistant: WebSocket at /api/websocket, control at /control/*\n');
   }
 });

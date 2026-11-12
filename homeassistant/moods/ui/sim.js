@@ -54,6 +54,12 @@
        tempEntity, temp: a temperature sensor (or a climate entity, whose current_temperature is set)
        clock: function returning a Date, the house's local time (default: the real clock). Only the
               mood time windows read it, so a test can pin it (fake-ha --clock, mock mode's ?time=)
+       extras: [{ entity_id, state, attributes }]  more entities at start (custom mood cards, placement helpers)
+       tables: the custom mood runner's tables (ui/dev/gen-custom.js TABLES), passed in by fake-ha.js and
+               the node checks. A custom mood slot (a script with mood_slot, its card the `card`
+               attribute of sensor.moods_custom_<n>) then runs its card's steps with the runner's rules.
+               Without tables (mock mode in the page: ui/dev/ is not shipped) a slot's card touches
+               simply reach their expected states, as a built-in mood's do.
        log: function(msg) */
   function HouseSim(opts) {
     opts = opts || {};
@@ -68,6 +74,8 @@
     this.runs = {};
     this.moodIds = [];
     this.noop = {};
+    this.actions = [];     // what the custom mood runner did, as service calls (fake-ha /control/actions)
+    this.tables = opts.tables || null;
     this.log = opts.log || function () {};
     this.clock = typeof opts.clock === 'function' ? opts.clock : function () { return new Date(); };
     var t = nowTs();
@@ -99,17 +107,26 @@
       put(m.entity_id, 'off', a);
       self.moodIds.push(m.entity_id);
     });
+    (opts.extras || []).forEach(function (x) {
+      if (x && typeof x.entity_id === 'string' && !self.states[x.entity_id]) put(x.entity_id, String(x.state), clone(x.attributes) || {});
+    });
 
     // role entities named by touches start in the opposite of what any mood expects
     this.touchIndex = {};
     this.moodIds.forEach(function (id) {
-      var ts = self.states[id].attributes.mood_touches;
-      if (!Array.isArray(ts)) return;
-      ts.forEach(function (tc) {
-        if (!tc || typeof tc.entity !== 'string' || !ENTITY_RE.test(tc.entity)) return;
+      self.touchesOf(id).forEach(function (tc) {
         if (!self.states[tc.entity]) put(tc.entity, opposite(tc.expect), { friendly_name: tc.entity.split('.')[1].replace(/_/g, ' ') });
       });
     });
+    // with custom mood slots and the runner's tables: every role a slot can reach exists (off), so
+    // "every other light" (light.role_all_lights) covers them all
+    if (this.tables && this.moodIds.some(function (id) { return self.isSlot(id); })) {
+      var T = this.tables;
+      Object.keys(T.ROLES).forEach(function (k) { var e = T.ROLES[k][0]; if (!self.states[e]) put(e, 'off', { friendly_name: e.split('.')[1].replace(/_/g, ' ') }); });
+      T.INDOOR.forEach(function (e) { if (!self.states[e]) put(e, 'off', {}); });
+      ['light.role_all_lights', 'binary_sensor.role_bedroom_tv', 'switch.role_diffuser', 'binary_sensor.role_bed'].forEach(function (e) { if (!self.states[e]) put(e, 'off', {}); });
+      if (!self.states['input_text.custom_mood_lit_outdoor']) put('input_text.custom_mood_lit_outdoor', '', { mode: 'text', min: 0, max: 64, pattern: null });
+    }
     // light.role_all_lights is a group of the other light roles (not the guest room)
     this.groupMembers = {};
     if (this.states['light.role_all_lights']) {
@@ -165,8 +182,19 @@
     var id = 'script.mood_' + slug;
     return this.moodIds.indexOf(id) >= 0 && this.states[id] ? id : null;
   };
+  /* a custom mood slot: script.mood_custom_<1..6> whose attributes carry mood_slot (as mood_begin's is_slot) */
+  HouseSim.prototype.isSlot = function (id) {
+    var s = this.states[id];
+    return !!s && /^script\.mood_custom_[1-6]$/.test(id) && s.attributes.mood_slot != null;
+  };
+  /* its card: the `card` attribute of sensor.moods_custom_<n> if it is a mapping, else {} (as mood_begin) */
+  HouseSim.prototype.cardOf = function (id) {
+    var c = this.states['sensor.moods_' + id.replace(/^script\.mood_/, '')];
+    c = c && c.attributes ? c.attributes.card : null;
+    return c && typeof c === 'object' && !Array.isArray(c) ? c : {};
+  };
   HouseSim.prototype.touchesOf = function (id) {
-    var s = this.states[id], ts = s && s.attributes.mood_touches;
+    var s = this.states[id], ts = s && (this.isSlot(id) ? this.cardOf(id).mood_touches : s.attributes.mood_touches);
     if (!Array.isArray(ts)) return [];
     return ts.filter(function (tc) { return tc && typeof tc.entity === 'string' && ENTITY_RE.test(tc.entity); });
   };
@@ -277,18 +305,22 @@
     // mood_begin
     this.set('script.mood_begin', 'on', { last_triggered: trig, current: 1 });
     var vacation = this.states['input_boolean.vacation_mode'].state === 'on';
+    // a custom mood slot: mood_begin reads its readiness, window and name from its card
+    var slot = this.isSlot(id), card = slot ? this.cardOf(id) : null;
     // the window is read from this script's own attributes (found by entity id, never mood_slug)
-    var win = windowState(st.attributes.mood_window, this.clock());
+    var wAttr = slot ? card.mood_window : st.attributes.mood_window;
+    var win = windowState(wAttr, this.clock());
     function refuse(reason) {
       self.set('input_text.house_mood_notice', (slug + '|' + new Date().toISOString() + '|' + reason).slice(0, 255));
       self.set(id, 'off', { current: 0 });
     }
     this.later(function () {
       self.set('script.mood_begin', 'off', { current: 0 });
-      // vacation first, then the mood's own time window
+      // vacation first, then (a slot) its card must be ready, then the mood's own time window
       if (vacation && slug !== 'away') { refuse('Vacation mode is on, so only Away can run.'); return; }
-      if (win.state === 'bad') self.log(id + ' has a malformed mood_window (' + JSON.stringify(st.attributes.mood_window) + '); it runs as if it had no window');
-      if (win.state === 'out') { refuse(moodName(st, slug) + ' only runs between ' + win.from + ' and ' + win.to + '.'); return; }
+      if (slot && card.mood !== true) { refuse(String(card.mood_reason || 'That custom mood is not ready on the Moods dashboard.').replace(/\|/g, ' ').slice(0, 200)); return; }
+      if (win.state === 'bad') self.log(id + ' has a malformed mood_window (' + JSON.stringify(wAttr) + '); it runs as if it had no window');
+      if (win.state === 'out') { refuse((slot ? moodName({ attributes: { mood_name: card.mood_name, friendly_name: st.attributes.friendly_name } }, slug) : moodName(st, slug)) + ' only runs between ' + win.from + ' and ' + win.to + '.'); return; }
       // stop other running moods (Lights Out stops a slow Good Morning)
       self.moodIds.forEach(function (o) {
         if (o !== id && self.states[o] && self.states[o].state === 'on') { self.cancelRun(o); self.set(o, 'off', { current: 0 }); }
@@ -301,6 +333,12 @@
       // the parallel block: each touched role reaches its state after a realistic delay
       self.cancelRun(id);
       var hs = [], last = 0;
+      if (slot && self.tables) {
+        // script.moods_custom_run, awaited by the slot script: its own refusals, then the card's steps
+        var r = self.runSlot(id, slug);
+        self.runs[id] = r.hs.concat([self.later(function () { self.set(id, 'off', { current: 0 }); }, r.last + 300)]);
+        return;
+      }
       self.touchesOf(id).forEach(function (tc, j) {
         if (tc.entity === self.never) return;
         var ms = self.delayFor(tc.entity, j);
@@ -315,6 +353,77 @@
       hs.push(self.later(function () { self.set(id, 'off', { current: 0 }); }, last + 300));
       self.runs[id] = hs;
     }, 120 + Math.random() * 150);
+  };
+  /* script.moods_custom_run for the slot script id, with the runner's rules (moods_custom.yaml):
+     it refuses unless its slot script is running, house_mood is the slot, vacation mode is off and the
+     card is ready; then it maps the card's steps through the fixed tables (no guest room; pct 1..100;
+     fade 0..60; one colour key per call), turns off the leaves of the "off" roles and of the chosen
+     other lights minus every leaf it lights (here a role is its own leaf, light.role_all_lights the
+     other light roles), and runs the extras. Each call is logged in this.actions; each entity
+     reaches its state after a realistic delay. -> { hs: timers, last: ms } */
+  function own(o, k) { return typeof k === 'string' && Object.prototype.hasOwnProperty.call(o, k); }
+  function toInt(v, d) { var n = typeof v === 'number' ? v : (typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN); return isFinite(n) ? Math.trunc(n) : d; }
+  function clampN(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+  HouseSim.prototype.runSlot = function (id, slug) {
+    var self = this, T = this.tables, card = this.cardOf(id), out = { hs: [], last: 0 };
+    var ok = this.states[id] && this.states[id].state === 'on' && this.states['input_text.house_mood'].state === slug &&
+      this.states['input_boolean.vacation_mode'].state !== 'on' && card.mood === true;
+    if (!ok) { this.log('moods_custom_run ' + slug + ': refused (not its running slot, vacation, or the card is not ready)'); return out; }
+    var steps = [];
+    (Array.isArray(card.mood_steps) ? card.mood_steps : []).slice(0, 4).forEach(function (s) {
+      if (!s || typeof s !== 'object' || Array.isArray(s) || !own(T.ROLES, s.lights) || !own(T.DO, s.do)) return;
+      var e = T.ROLES[s.lights][0], act = T.DO[s.do];
+      if (/guest_room/.test(e)) return;
+      steps.push({ e: e, kind: act[0], arg: act[1], pct: clampN(toInt(s.pct, 0), 1, 100) });
+    });
+    function expand(list) {
+      var r = [];
+      list.forEach(function (e) { (self.groupMembers[e] || [e]).forEach(function (x) { if (r.indexOf(x) < 0) r.push(x); }); });
+      return r;
+    }
+    var on = steps.filter(function (s) { return s.kind !== 'off'; });
+    var lit = expand(on.map(function (s) { return s.e; }));
+    // what this run lit outdoors, for the 01:00 outdoor-off (input_text.custom_mood_lit_outdoor)
+    var outdoor = Object.keys(T.ROLES).filter(function (k) { return T.ROLES[k][3] === 1; }).map(function (k) { return T.ROLES[k][0]; });
+    var litOut = on.some(function (s) { return outdoor.indexOf(s.e) >= 0; }) ? slug : '';
+    // (a helper write, so it is not logged in this.actions with the device calls)
+    if (this.states['input_text.custom_mood_lit_outdoor']) this.set('input_text.custom_mood_lit_outdoor', litOut);
+    var ex = card.mood_extras && typeof card.mood_extras === 'object' && !Array.isArray(card.mood_extras) ? card.mood_extras : {};
+    var fade = clampN(toInt(ex.fade, 2), 0, 60);
+    var others = ex.others === 'indoor' || ex.others === 'all' ? ex.others : 'leave';
+    var extra = others === 'indoor' ? T.INDOOR : (others === 'all' ? ['light.role_all_lights'] : []);
+    var offRoles = steps.filter(function (s) { return s.kind === 'off'; }).map(function (s) { return s.e; });
+    var toOff = expand(offRoles.concat(extra)).filter(function (e) { return lit.indexOf(e) < 0 && !/guest_room/.test(e); });
+    var tv = ex.tv === 'on' || ex.tv === 'off' ? ex.tv : '';
+    var scent = ex.scent === 'on' || ex.scent === 'off' ? ex.scent : '';
+    var bed = ['off', 62, 64, 66, 68, 70].indexOf(ex.bed) >= 0 ? ex.bed : '';
+    var j = 0;
+    function act(service, ids, data, entity, state, attrs) {
+      self.actions.push({ t: Date.now(), slot: slug, service: service, entity_id: ids, data: data || {} });
+      if (self.actions.length > 200) self.actions.shift();
+      (Array.isArray(entity) ? entity : [entity]).forEach(function (e) {
+        if (!e || e === self.never || !self.states[e]) return;
+        var ms = self.delayFor(e, j++);
+        out.last = Math.max(out.last, ms);
+        out.hs.push(self.later(function () { self.set(e, state, attrs); }, ms));
+      });
+    }
+    if (toOff.length) act('light.turn_off', toOff, { transition: fade }, toOff, 'off');
+    on.forEach(function (s) {
+      var data;
+      if (s.kind === 'white') data = { color_temp_kelvin: clampN(toInt(s.arg, 2700), 2000, 6500), brightness_pct: s.pct, transition: fade };
+      else if (s.kind === 'colour' && Array.isArray(s.arg) && s.arg.length === 3) data = { rgb_color: s.arg.map(function (v) { return clampN(toInt(v, 0), 0, 255); }), brightness_pct: s.pct, transition: fade };
+      else data = { brightness_pct: s.pct, transition: fade };
+      var attrs = { brightness: Math.round(s.pct * 255 / 100) };
+      if (data.color_temp_kelvin) attrs.color_temp_kelvin = data.color_temp_kelvin;
+      if (data.rgb_color) attrs.rgb_color = data.rgb_color;
+      act('light.turn_on', [s.e], data, s.e, 'on', attrs);
+    });
+    if (tv) act('script.role_bedroom_tv_' + tv, [], {}, 'binary_sensor.role_bedroom_tv', tv);
+    if (scent) act('switch.turn_' + scent, ['switch.role_diffuser'], {}, 'switch.role_diffuser', scent);
+    if (bed === 'off') act('script.role_bed_off', [], {}, 'binary_sensor.role_bed', 'off');
+    else if (bed !== '') act('script.role_bed_cool', [], { temperature: bed }, 'binary_sensor.role_bed', 'on');
+    return out;
   };
   HouseSim.prototype.cancelRun = function (id) {
     var self = this;
@@ -356,7 +465,8 @@
   HouseSim.prototype.outside = function (slug) {
     var cur = this.states['input_text.house_mood'].state, id = slug ? this.moodBySlug(slug) : null;
     if (!id) {
-      var others = this.moodIds.filter(function (m) { return m !== 'script.mood_' + cur; });
+      var self = this;   // a random pick is a mood: true script (a custom mood slot only when asked for by slug)
+      var others = this.moodIds.filter(function (m) { return m !== 'script.mood_' + cur && !self.isSlot(m); });
       id = others[Math.floor(Math.random() * others.length)];
     }
     if (id) this.runMood(id, 'outside');

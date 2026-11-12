@@ -85,6 +85,38 @@
     return out;
   }
 
+  /* ?mockset=custom: the demo moods plus two custom mood slots made on the Moods dashboard (a slot
+     script with mood_slot, its card the `card` attribute of sensor.moods_custom_<n>, as
+     ui/dev/fixtures/custom-cards.json has them from Home Assistant), and placement for two demo moods:
+     Movie Night "Not on the Bedroom Palm" (hidden on the default bedroom panel) and Good Morning at
+     order 5 (first). Slot 1 "Reading" is ready; slot 2 "Dusk" is switched off, so it is not shown. */
+  var READING = { mood: true, mood_slot: 1, mood_state: 'ready', mood_reason: '', mood_name: 'Reading', mood_tagline: 'Bedroom lamps soft white (2700 K), 40%.',
+    mood_status: 'Bedroom lamps soft white (2700 K), 40%', mood_scope: 'Bedroom', mood_glyph: 'ember',
+    mood_palette: { base: '#130905', glows: ['#d6742c', '#80341e', '#604670'], accent: '#f2a65e', ink: '#f8e8d4' }, mood_night: false, mood_window: null,
+    mood_order: 110, mood_panels: [], mood_touches: [{ label: 'Lamps', entity: 'light.role_bedroom_lamps', expect: 'on' }], mood_lights_outdoor: false,
+    mood_steps: [{ lights: 'Bedroom lamps', do: 'Soft white (2700 K)', pct: 40 }], mood_extras: { tv: null, scent: null, bed: null, others: 'leave', fade: 2 },
+    mood_summary: 'Bedroom lamps soft white (2700 K), 40%', mood_problems: [] };
+  var DUSK_OFF = { mood: false, mood_slot: 2, mood_state: 'not_ready', mood_reason: 'Dusk is switched off on the Moods dashboard.', mood_name: 'Dusk',
+    mood_tagline: 'Loft amber and low. Diffuser on.', mood_status: 'Loft lamp amber, 30%', mood_scope: 'Loft', mood_glyph: 'candle',
+    mood_palette: { base: '#110716', glows: ['#ba387a', '#5c32a4', '#e67042'], accent: '#f4917c', ink: '#f8e4ec' }, mood_night: false, mood_window: { from: '17:00', to: '23:00' },
+    mood_order: 120, mood_panels: [], mood_touches: [{ label: 'Loft', entity: 'light.role_loft_lamp', expect: 'on' }, { label: 'Scent', entity: 'switch.role_diffuser', expect: 'on' }],
+    mood_lights_outdoor: false, mood_steps: [{ lights: 'Loft lamp', do: 'Amber', pct: 30 }], mood_extras: { tv: null, scent: 'on', bed: null, others: 'indoor', fade: 2 },
+    mood_summary: 'Loft lamp amber, 30%. Other indoor lights off. Diffuser on', mood_problems: [] };
+  function custom() {
+    return DEMO.concat([1, 2].map(function (n) {
+      return { entity_id: 'script.mood_custom_' + n, alias: 'Mood: Custom ' + n, icon: 'mdi:palette-swatch-outline', attributes: { mood_slot: n, mood_holds_outdoor: false } };
+    }));
+  }
+  function extras(set) {
+    if (set !== 'custom') return [];
+    return [
+      { entity_id: 'sensor.moods_custom_1', state: 'ready', attributes: { card: READING, friendly_name: 'Reading' } },
+      { entity_id: 'sensor.moods_custom_2', state: 'not_ready', attributes: { card: DUSK_OFF, friendly_name: 'Dusk (switched off)' } },
+      { entity_id: 'input_select.moods_movie_night_where', state: 'Not on the Bedroom Palm', attributes: {} },
+      { entity_id: 'input_number.moods_good_morning_order', state: '5', attributes: {} }
+    ];
+  }
+
   /* a WebSocket look-alike over HouseSim; messages are delivered asynchronously like a socket */
   function MockSocket(sim) {
     var s = this;
@@ -111,7 +143,8 @@
   }
 
   window.MockHA = {
-    moods: function (set) { return set === 'many' ? many() : DEMO.slice(); },
+    moods: function (set) { return set === 'many' ? many() : set === 'custom' ? custom() : DEMO.slice(); },
+    extras: extras,
     tempEntity: 'sensor.bedroom_temperature',
     never: 'light.role_patio_lights',      // Afterglow's patio never answers in the demo
     MockSocket: MockSocket

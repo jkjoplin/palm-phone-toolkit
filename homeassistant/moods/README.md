@@ -25,11 +25,12 @@ Palm phone                                          Home Assistant
           Wi-Fi lock, crash recovery                                        that names them)
   ui/     "Ember" web UI, bundled in the APK  <-- ws -->  <mood>.yaml       one file per mood
           talks to HA over the WebSocket API            moods_settings.yaml dashboard settings
-          with a long-lived token                     dashboards/palm_moods.yaml  the "Moods" dashboard
+          with a long-lived token                       moods_custom.yaml   moods made on the dashboard
+                                                      dashboards/palm_moods.yaml  the "Moods" dashboard
 ```
 
 - **The shell** (`shell/`, package `com.palmmoods.shell`) is a small Kotlin app with no AndroidX. It is set as the phone's home app, so it starts at boot. It hosts the web UI, gives it what a web page cannot reach (window brightness, the vibration motor, the light and proximity sensors, battery and Wi-Fi state), and keeps it running: a watchdog reloads a page that stops sending heartbeats, and crashes restart with a back-off. Five quick taps on the clock open Android Settings; Moods comes back by itself after 5 minutes.
-- **The UI** (`ui/`) is plain HTML, CSS and JavaScript with no build step and no network fetches. It finds moods by subscribing to `script.*` entities that carry `mood: true`, so a new mood file shows up on every phone after a reload, with no app update. It dims itself at night (by the clock, a dark room, or a night mood like Lights Out) to a red-shifted, motionless face.
+- **The UI** (`ui/`) is plain HTML, CSS and JavaScript with no build step and no network fetches. It finds moods by subscribing to `script.*` entities that carry `mood: true`, so a new mood file shows up on every phone after a reload, with no app update. From app 0.2.0 it also shows the moods made on the dashboard, and follows each mood's placement (which phones show it, and in what order). It dims itself at night (by the clock, a dark room, or a night mood like Lights Out) to a red-shifted, motionless face.
 - **The Home Assistant package** (`ha/`) holds the moods. A mood names **roles** (`light.role_bedroom_lamps`, `switch.role_diffuser`, `script.role_bed_cool`), never devices. Only `moods_roles.yaml` maps roles to your entity ids, so swapping a lamp is a one-line change and no mood file changes. An empty role is fine; that step just does nothing.
 
 The full contract between the three parts is [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The phone survey it was designed against is [docs/device-profile.md](docs/device-profile.md).
@@ -46,7 +47,7 @@ The package ships with eight moods for an example house (bedroom, office, loft, 
 | Lights Out | Every light off (except the guest room), TV off, speakers paused, bed cools |
 | Good Morning | Bedroom lamps rise to daylight in steps; only runs 05:00 to 11:00 |
 | Focus | Office lights bright and cool; nothing else changes |
-| Hosting | Patio and porch lit warm; can hold the outdoor lights past your own 22:30 night-off automation ([one line to add](ha/README.md#automations-that-fight-moods)) |
+| Hosting | Patio and porch lit warm; can hold the outdoor lights past a night-off automation of your own (22:30 in the example) ([one line to add](ha/README.md#automations-that-fight-moods)) |
 | Away | Everything off, thermostat to eco |
 | Showcase | Example: the office lamp moves to the next of six colours each time |
 
@@ -103,7 +104,9 @@ With no config at all the app runs in demo mode (five demo moods and a small "De
 
 ## Add or change a mood
 
-A mood is one file. To add one:
+The quickest way needs no YAML: make it on the dashboard's **My moods** tab (see [below](#the-settings-dashboard)). Up to six moods can be made there, from fixed choices: which lights, white or a colour, brightness, other lights off, the bedroom TV, the diffuser and the bed.
+
+For anything else, a mood is one file. To add one:
 
 1. Copy a mood close to what you want: `cp ha/packages/moods/showcase.yaml ha/packages/moods/reading.yaml`. `showcase.yaml` is the smallest; `focus.yaml` shows a mood with a dashboard setting.
 2. Rename the two keys, `script.mood_showcase` under `customize:` and `mood_showcase:` under `script:`, to `script.mood_reading` and `mood_reading`. Set `mood_slug` to `reading` too.
@@ -111,6 +114,7 @@ A mood is one file. To add one:
 4. List the confirmation marks in `mood_touches`: each is a role entity and the state it should reach.
 5. Change the actions in the script. **Keep its first two steps exactly as they are** (the `script.mood_begin` call and the condition on `begin.proceed`): they record the mood, make Undo work, and apply vacation mode and time windows. Target roles, never devices, and keep `continue_on_error: true` on each action.
 6. Reload **Location & customizations**, then **Scripts**. The new card appears on every phone within a second or two.
+7. Give it the two placement helpers (`input_select.moods_reading_where`, `input_number.moods_reading_order`) in `moods_settings.yaml` and run `node ui/dev/gen-custom.js --write`; `lint.js` says what is missing. See [ha/README.md](ha/README.md#how-to-add-a-mood).
 
 To change a mood, edit its file and reload the same two. To remove one, delete its file and reload. To swap a device, edit its role in `moods_roles.yaml` and reload **Group entities** (and **Template entities** or **Scripts** for the TV, bed and thermostat wrappers).
 
@@ -118,20 +122,33 @@ The card text, the palette fields and the available glyphs are described in [ha/
 
 ## The settings dashboard
 
-The package adds a "Moods" dashboard to the Home Assistant sidebar, for anyone with a Home Assistant login. It has three tabs:
+The package adds a "Moods" dashboard to the Home Assistant sidebar, for anyone with a Home Assistant login. It has four tabs:
 
-- **Moods**: the current mood and the one before it, a button for each mood (each asks before it changes the house), Undo, and one setting per mood: how warm and low Wind Down's lamps are, how red Movie Night's lamp is, how cool the bed gets at Lights Out, how bright Good Morning gets, and so on. Every option is checked inside the mood, so a bad value falls back to the usual one rather than doing something odd. There is also a safety section (the guest room switches, vacation mode) and "put every setting back to Usual".
+- **Moods**: the current mood and the one before it, a button for each mood (each asks before it changes the house), Undo, and for each mood its one setting, where it shows and its order in the deck. The settings are how warm and low Wind Down's lamps are, how red Movie Night's lamp is, how cool the bed gets at Lights Out, how bright Good Morning gets, and so on. Each setting's last option, "Custom (sliders below)", shows one slider per number, limited to the same range as the presets. Every value is checked inside the mood, so a bad one falls back to the usual value rather than doing something odd. There is also a safety section (the guest room switches, vacation mode) and "put every setting back to Usual".
+- **My moods**: six slots for moods made on the dashboard. Each has its own page: name, card text, picture, colours, when it runs, up to four light steps, other lights, the TV, the diffuser and the bed, then where it shows. "Switched on" puts it on the phones, "Try it now" sets it, "Clear this mood" wipes it. A custom mood goes through the same rules as any other (vacation mode, time window, Undo) and can never touch the guest room, the thermostat or a speaker.
 - **Phones**: for each Palm, its night hours and how bright its screen is by day. The helpers exist for the panels `bedroom` and `living_room`; copy them for other panel names.
 - **Devices**: which devices fill each role, and which of them are not answering.
 
-The settings are plain `input_select` helpers whose first option is the built-in behaviour, so nothing needs seeding. They are listed in [ha/README.md](ha/README.md#the-settings-screen-moods-in-the-sidebar). There is no screenshot of the dashboard here.
+| | |
+| --- | --- |
+| ![My moods: three slots in use, three empty](docs/img/dash-my-moods.jpg) | ![A custom mood's page: its card, then its light steps](docs/img/dash-custom-mood.jpg) |
+| My moods | One custom mood |
+| ![Focus on "Custom (sliders below)", with where it shows](docs/img/dash-sliders-focus.jpg) | |
+| A built-in mood on its sliders | |
+
+**Placement.** Every mood, built-in or custom, has "Where it shows" (as the mood says, first on every phone, only or not on one Palm, or hidden on every phone) and "Order in the deck" (0 keeps the mood's own order). The mood that is the house's current mood always stays on the face, so a phone never hides what is on. Phones need app 0.2.0 or newer for this and for custom moods; an older app ignores both.
+
+The settings are plain helpers whose first option is the built-in behaviour, so a fresh install changes nothing until someone picks something. They are listed in [ha/README.md](ha/README.md#the-settings-screen-moods-in-the-sidebar), and the custom moods are described in [ha/README.md](ha/README.md#custom-moods). The screenshots are from a throwaway Home Assistant 2026.11.1 with stand-in devices.
+
+**Voice assistants.** If your Google Assistant (or Alexa, or Assist) integration exposes every domain, the package's helpers and editor scripts appear there as devices: a few hundred of them, counting the custom mood slots. It is clutter, not a hole (every value is checked inside the moods), but you may want to leave `input_select`, `input_number`, `input_boolean` and `input_text` out of that integration's exposed domains. See [ha/README.md](ha/README.md#known-limits).
 
 ## Checks
 
 From `homeassistant/moods/`:
 
 ```bash
-node ui/dev/lint.js                       # Chrome 101 limits, palettes, card text, settings
+node ui/dev/lint.js                       # Chrome 101 limits, palettes, card text, settings, custom moods
+node ui/dev/gen-custom.js                 # moods_custom.yaml and the dashboard subviews match the generator
 node ui/dev/mood-yaml.js --check          # the UI's YAML reader against PyYAML (needs uv)
 python3 tools/test_check_config.py        # config parser cases shared with the app
 python3 -m http.server 8766 -d ui &       # then, with Google Chrome installed:
@@ -139,7 +156,7 @@ node ui/dev/drive.js                      # end-to-end run against the fake Home
 (cd shell && ./gradlew testDebugUnitTest assembleDebug)
 ```
 
-`ui/dev/fake-ha.js` is a fake Home Assistant that loads the real package files, so you can try a mood on the UI without touching your house. `?mock=1` on `ui/index.html` runs the demo moods in a desktop browser. See [ui/dev/README.md](ui/dev/README.md).
+`moods_custom.yaml` and the six slot pages of the dashboard are generated by `ui/dev/gen-custom.js`: change the generator and run it with `--write`, never edit them by hand. `ui/dev/fake-ha.js` is a fake Home Assistant that loads the real package files, so you can try a mood on the UI without touching your house. `?mock=1` on `ui/index.html` runs the demo moods in a desktop browser. See [ui/dev/README.md](ui/dev/README.md).
 
 ## Known limits
 

@@ -1,0 +1,153 @@
+{
+  "_comment": [
+    "The option texts of the custom mood slots (custom_mood_<n>_*) and of every mood's placement helper (input_select.moods_<slug>_where). Frozen: lint.js fails if one is renamed or removed, or if a new one is not listed here.",
+    "A chosen option that disappears falls back to the first one after a restart (a step silently becomes No step), and the phones match the placement texts word for word.",
+    "To add an option: append it in ui/dev/gen-custom.js (and moods_settings.yaml for where) and append it here, in the same change. Never rename or reorder.",
+    "The input_select.moods_<slug>_look / _bed lists are the built-in moods' settings (moods_settings.yaml): the same rules, and \"Custom (sliders below)\" stays last (a new preset goes just before it, here and there). A chosen option must survive every update."
+  ],
+  "glyph": [
+    "Ember",
+    "Candle",
+    "Curtain",
+    "Bulbs",
+    "Moon",
+    "Sunrise",
+    "Desk lamp",
+    "Glasses",
+    "Key"
+  ],
+  "colours": [
+    "Ember amber",
+    "Cinema red",
+    "Dusk rose",
+    "Night indigo",
+    "Sunrise gold",
+    "Daylight blue",
+    "Garden brass",
+    "Steel night",
+    "Ocean teal",
+    "Forest green"
+  ],
+  "window": [
+    "Any time",
+    "Mornings (05:00 to 11:00)",
+    "Daytime (08:00 to 18:00)",
+    "Evenings (17:00 to 23:00)",
+    "Late evening (20:00 to 02:00)",
+    "Night (21:00 to 07:00)"
+  ],
+  "fade": [
+    "Usual (2 s)",
+    "Instant",
+    "Slow (10 s)",
+    "Very slow (30 s)"
+  ],
+  "others": [
+    "Leave other lights alone",
+    "Turn other indoor lights off",
+    "Turn every other light off, outdoors too"
+  ],
+  "tv": [
+    "Leave the TV alone",
+    "Bedroom TV on",
+    "Bedroom TV off"
+  ],
+  "scent": [
+    "Leave the diffuser alone",
+    "Diffuser on",
+    "Diffuser off"
+  ],
+  "bed": [
+    "Leave the bed alone",
+    "Bed off",
+    "Bed to 62 °F",
+    "Bed to 64 °F",
+    "Bed to 66 °F",
+    "Bed to 68 °F",
+    "Bed to 70 °F"
+  ],
+  "step_lights": [
+    "No step",
+    "Bedroom lamps",
+    "Bedroom movie lamp",
+    "Office lights",
+    "Loft lamp",
+    "Living room lights",
+    "Kitchen lights",
+    "Patio lights",
+    "Porch lights",
+    "Driveway lights"
+  ],
+  "step_do": [
+    "Soft white (2700 K)",
+    "Warm white (2200 K)",
+    "Candlelight (2000 K)",
+    "Neutral white (4000 K)",
+    "Daylight (5000 K)",
+    "Cool daylight (6500 K)",
+    "Amber",
+    "Deep red",
+    "Rose",
+    "Magenta",
+    "Violet",
+    "Blue",
+    "Teal",
+    "Green",
+    "Keep its colour",
+    "Off"
+  ],
+  "where": [
+    "Usual (as the mood says)",
+    "First on every phone",
+    "Only on the Bedroom Palm",
+    "Only on the Living room Palm",
+    "Not on the Bedroom Palm",
+    "Not on the Living room Palm",
+    "Hidden on every phone"
+  ],
+  "input_select.moods_wind_down_look": [
+    "Usual (25%, 2200 K)",
+    "Dimmer (15%, 2200 K)",
+    "Candlelight (10%, 2000 K)",
+    "A little brighter (40%, 2700 K)",
+    "Custom (sliders below)"
+  ],
+  "input_select.moods_movie_night_look": [
+    "Usual (6%)",
+    "Darker (3%)",
+    "A little brighter (12%)",
+    "Custom (sliders below)"
+  ],
+  "input_select.moods_afterglow_look": [
+    "Usual (loft 45%, patio 55%)",
+    "Softer (loft 30%, patio 35%)",
+    "Brighter (loft 65%, patio 80%)",
+    "Custom (sliders below)"
+  ],
+  "input_select.moods_lights_out_bed": [
+    "Usual (66 °F)",
+    "Cooler (62 °F)",
+    "A little cooler (64 °F)",
+    "A little warmer (68 °F)",
+    "Warmer (70 °F)",
+    "Custom (sliders below)"
+  ],
+  "input_select.moods_good_morning_look": [
+    "Usual (lamps up to 70%, loft 50%)",
+    "Gentler (lamps up to 50%, loft 35%)",
+    "Softest (lamps up to 35%, loft 25%)",
+    "Custom (sliders below)"
+  ],
+  "input_select.moods_focus_look": [
+    "Usual (100%, 5000 K)",
+    "Softer (75%, 4500 K)",
+    "Crisp daylight (100%, 6000 K)",
+    "Custom (sliders below)"
+  ],
+  "input_select.moods_hosting_look": [
+    "Usual (patio 60%, porch 70%)",
+    "Softer (patio 40%, porch 50%)",
+    "Brighter (patio 80%, porch 100%)",
+    "Custom (sliders below)"
+  ]
+}

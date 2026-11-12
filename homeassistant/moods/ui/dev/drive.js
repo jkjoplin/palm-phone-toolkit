@@ -79,6 +79,39 @@ const SHELL = (cfg) => `
         && S('light.role_bedroom_lamps') === 'off' && /\|Good Morning only runs between 05:00 and 11:00\.$/.test(S('input_text.house_mood_notice')),
       [s1, S('input_text.house_mood'), S('script.mood_good_morning'), S('light.role_bedroom_lamps'), S('input_text.house_mood_notice')].join(' / '));
   }
+  // the custom mood runner on sim.js (the rules of script.moods_custom_run, with gen-custom.js's tables)
+  {
+    const HouseSim = require('../sim.js'), G = require('./gen-custom'), F = require('./fixtures/custom-cards.json');
+    const slots = [1, 2, 3].map((n) => ({ entity_id: 'script.mood_custom_' + n, alias: 'Mood: Custom ' + n, attributes: { mood_slot: n, mood_holds_outdoor: false } }));
+    const card = (n, v) => ({ entity_id: 'sensor.moods_custom_' + n, state: F.variants[n][v].state, attributes: { card: F.variants[n][v].card } });
+    const sim = new HouseSim({ moods: require('./mood-yaml').loadMoods(path.join(__dirname, '..', '..', 'ha', 'packages', 'moods')).concat(slots), tables: G.TABLES, speed: 0.05, never: '',
+      initial: 'wind_down', extras: [card(1, 'reading'), card(2, 'dusk'), card(3, 'red')], clock: () => { const d = new Date(); d.setHours(21, 18, 0, 0); return d; } });
+    const S = (id) => sim.states[id] && sim.states[id].state;
+    sim.set('light.role_bedroom_movie_lamp', 'on');
+    sim.runSlot('script.mood_custom_3', 'custom_3');
+    check('runner: refuses when its slot script is not running (a direct call): no service calls', sim.actions.length === 0, JSON.stringify(sim.actions));
+    sim.runMood('script.mood_custom_3', 'test');
+    await sleep(500);
+    const offs = (sim.actions.find((a) => a.service === 'light.turn_off') || {}).entity_id || [];
+    check('runner: "every other light off" with the movie lamp deep red 6% never turns the movie lamp off, never names the guest room, sends one colour key',
+      S('input_text.house_mood') === 'custom_3' && offs.length > 3 && offs.indexOf('light.role_bedroom_movie_lamp') < 0 && !offs.some((e) => /guest_room/.test(e)) && S('light.role_bedroom_movie_lamp') === 'on' && S('light.role_bedroom_lamps') === 'off' &&
+      sim.actions.some((a) => a.service === 'light.turn_on' && JSON.stringify(a.data) === '{"rgb_color":[150,8,6],"brightness_pct":6,"transition":10}') && sim.actions.some((a) => a.service === 'script.role_bedroom_tv_on'),
+      JSON.stringify(sim.actions.map((a) => a.service + ' ' + a.entity_id.join(',') + ' ' + JSON.stringify(a.data))));
+    sim.actions.length = 0;
+    sim.set('sensor.moods_custom_1', 'ready', { card: Object.assign({}, F.variants[1].reading.card, { mood_steps: [{ lights: 'Guest room lamp', do: 'Soft white (2700 K)', pct: 40 }, { lights: 'Bedroom lamps', do: 'Off', pct: 0 }, { lights: 'Office lights', do: 'Keep its colour', pct: 400 }], mood_extras: { bed: 96, tv: 'maybe', fade: 1e9, others: 'guest_room' } }) });
+    sim.runMood('script.mood_custom_1', 'test');
+    await sleep(500);
+    check('runner: an injected guest room role and a 96 F bed are skipped; pct 400 is 100, fade is at most 60, an unknown "others" leaves them',
+      sim.actions.map((a) => a.service + ' ' + a.entity_id.join(',') + ' ' + JSON.stringify(a.data)).join(' / ') === 'light.turn_off light.role_bedroom_lamps {"transition":60} / light.turn_on light.role_office_lights {"brightness_pct":100,"transition":60}',
+      JSON.stringify(sim.actions.map((a) => a.service + ' ' + a.entity_id.join(',') + ' ' + JSON.stringify(a.data))));
+    sim.stop();
+    // mock.js's custom card is the fixture's, as Home Assistant renders it
+    const mockWin = {};
+    new Function('window', 'setTimeout', fs.readFileSync(path.join(__dirname, '..', 'mock.js'), 'utf8'))(mockWin, setTimeout);
+    const mc = mockWin.MockHA.extras('custom').find((x) => x.entity_id === 'sensor.moods_custom_1');
+    check('mock.js ?mockset=custom carries the fixture\'s Reading card exactly', JSON.stringify(mc.attributes.card) === JSON.stringify(F.variants[1].reading.card), '');
+  }
+  const extra = [];   // more fakes and servers, stopped at the end
   const fake = spawn(process.execPath, [path.join(__dirname, 'fake-ha.js'), '--port', String(FAKE_PORT), '--token', TOKEN, '--never', 'light.role_patio_lights', '--initial', 'wind_down', '--previous', 'lights_out', '--clock', '21:18', '--quiet'], { stdio: 'inherit' });
   await sleep(800);
   const b = await launch();
@@ -334,6 +367,90 @@ const SHELL = (cfg) => `
       // the next check sets Focus from outside: leave the house on another mood
       await ctl('/control/outside?slug=' + from);
       await until((x) => x.shown === from && x.view === 'idle', 4000);
+      await sleep(1200);
+    }
+
+    // ---- the same, when HA's answer to the call arrives on time but the state diffs it writes a few
+    // ms later are held (lost segments starting in that gap: TCP delivers the result and holds the
+    // rest). The answer proves nothing about the store: the face must wait for a ping's pong before it
+    // calls the mood unset. Then the Undo path under the same lags, and a 4.5 s lag that delivers
+    // house_mood_previous alone after the card has gone back to the face.
+    {
+      i = await until((x) => x.view === 'idle', 4000);
+      const from = i.shown;
+      await ctl('/control/set?entity=light.role_office_lights&state=on');
+      async function toFocus() {
+        await until((x) => x.view === 'idle', 6000);
+        await p.tap(CX, 470 * u); await sleep(900);
+        const x = await info(), fi = x.moods.indexOf('focus'), at = Math.max(0, x.cur);
+        for (let k = 0; k < Math.abs(fi - at); k++) { await p.key(fi > at ? 'ArrowRight' : 'ArrowLeft'); await sleep(650); }
+        await sleep(900);
+      }
+      async function watch(ms, t0) {
+        const seen = new Set(), notes = new Set();
+        while (Date.now() - t0 < ms) {
+          const x = await info();
+          if (Date.now() - t0 > 700) seen.add(x.shown);
+          if (x.faceNote || x.cardNote) notes.add((x.faceNote + ' ' + x.cardNote).trim());
+          await sleep(150);
+        }
+        return { seen: [...seen], notes: [...notes] };
+      }
+      const outsideSince = (t) => p.eval('window.__moods.trail.filter(function(e){return e.t>=' + t + '&&e.kind==="outside"}).length');
+      async function tapFaceUndo() {
+        const r = JSON.parse(await p.eval('JSON.stringify(document.getElementById("faceUndo").getBoundingClientRect())'));
+        await p.tap(r.left + r.width / 2, r.top + r.height / 2);
+      }
+      // 1) a hold: answer on time, diffs 10 s late
+      await toFocus();
+      await ctl('/control/lag?ms=10000&for=2500&after=result');
+      let t0 = Date.now();
+      await p.press(CX, 485 * u, 800);
+      let w = await watch(14000, t0);
+      i = await info();
+      let st = await ctl('/control/state');
+      check('a mood HA set whose answer is on time but whose diffs are 10 s late: the face ends on it and never says "didn\'t set"', st.mood === 'focus' && i.shown === 'focus' && i.ha === 'focus' && !w.notes.some((n) => /didn.t set/.test(n)),
+        'house ' + st.mood + ', shown ' + i.shown + ', notes ' + JSON.stringify(w.notes));
+      check('...and never goes back to ' + from + ' meanwhile', w.seen.indexOf(from) < 0, 'shown: ' + w.seen.join(','));
+      await ctl('/control/outside?slug=' + from);
+      await until((x) => x.shown === from && x.view === 'idle', 4000);
+      await sleep(1200);
+      // 2) a hold with everything 4.5 s late: the card is back on the face at 4 s, then
+      // house_mood_previous arrives alone (house_mood a moment later). It is not an outside change
+      // back to the old mood: no flash, and the face keeps its Undo.
+      await toFocus();
+      await ctl('/control/lag?ms=4500&for=1500');
+      t0 = Date.now();
+      await p.press(CX, 485 * u, 800);
+      await sleep(6800 - (Date.now() - t0));
+      i = await info();
+      const outs = await outsideSince(t0);
+      check('a hold whose answer is 4.5 s late: house_mood_previous arriving alone is no outside change, and the face keeps its Undo', i.view === 'idle' && i.shown === 'focus' && i.ha === 'focus' && outs === 0 && i.undo > 0 && i.undoTo === from,
+        i.view + ' shown ' + i.shown + ' ha ' + i.ha + ', outside notes ' + outs + ', undo ' + i.undo + ' to ' + i.undoTo);
+      // 3) that face Undo with everything 10 s late: HA does it at once; the no-answer timeout
+      // reconnects and the reconnect's full state shows it. The face never flips back to Focus.
+      await ctl('/control/lag?ms=10000&for=1500');
+      t0 = Date.now();
+      await tapFaceUndo();
+      w = await watch(12000, t0);
+      i = await info();
+      st = await ctl('/control/state');
+      check('a face Undo HA did while its answer is 10 s late: the face stays on ' + from + ', with no "didn\'t answer"', st.mood === from && i.shown === from && i.ha === from && w.seen.indexOf('focus') < 0 && !w.notes.some((n) => /didn.t answer|didn.t go through|Lost/.test(n)),
+        'house ' + st.mood + ', shown ' + i.shown + ', seen ' + w.seen.join(',') + ', notes ' + JSON.stringify(w.notes));
+      await sleep(600);
+      // 4) a face Undo whose answer is on time but whose diffs are 10 s late: not "Undo didn't go through"
+      await toFocus();
+      await p.press(CX, 485 * u, 800);
+      i = await until((x) => x.view === 'idle' && x.undo > 0 && x.ha === 'focus', 8000);
+      await ctl('/control/lag?ms=10000&for=2500&after=result');
+      t0 = Date.now();
+      await tapFaceUndo();
+      w = await watch(12000, t0);
+      i = await info();
+      st = await ctl('/control/state');
+      check('a face Undo whose answer is on time but whose diffs are 10 s late: the face stays on ' + from + ', not "Undo didn\'t go through"', st.mood === from && i.shown === from && i.ha === from && w.seen.indexOf('focus') < 0 && !w.notes.some((n) => /didn.t go through|didn.t answer/.test(n)),
+        'house ' + st.mood + ', shown ' + i.shown + ', seen ' + w.seen.join(',') + ', notes ' + JSON.stringify(w.notes));
+      await until((x) => x.view === 'idle', 4000);
       await sleep(1200);
     }
 
@@ -674,11 +791,316 @@ const SHELL = (cfg) => `
       i = await until((x) => (want === 'runs' ? x.ha === 'good_morning' : /only runs/.test(x.cardNote)), 4000);
       check('mock mode at ' + t + ': Good Morning ' + want, i.mode === 'mock' && (want === 'runs' ? i.ha === 'good_morning' : i.cardNote === 'Good Morning only runs between 05:00 and 11:00.' && i.ha !== 'good_morning'), i.mode + ' ha=' + i.ha + ' "' + i.cardNote + '"');
     }
+
+    // ======== custom moods (slots made on the Moods dashboard) and placement, on a second fake ========
+    // The fake above served day one (every slot empty, every placement Usual): the deck was exactly
+    // the 0.1.0 deck. This one serves the fixture set "ready": slot 1 Reading (bedroom lamps soft
+    // white 40%), slot 2 Dusk (17:00 to 23:00), slot 3 Red room, slot 4 named but with nothing to do
+    // (not ready), slots 5 and 6 empty. Cards are as Home Assistant renders them (fixtures/make-cards.py).
+    if (!process.env.SKIP_CUSTOM) {
+      const P2 = FAKE_PORT + 1, P3 = FAKE_PORT + 2, P4 = FAKE_PORT + 3;
+      const c2 = (q) => new Promise((res, rej) => http.get('http://127.0.0.1:' + P2 + q, (r) => { let s = ''; r.on('data', (d) => (s += d)); r.on('end', () => { try { res(JSON.parse(s)); } catch (e) { res(s); } }); }).on('error', rej));
+      const cards = (body, q) => new Promise((res, rej) => {
+        const data = body ? JSON.stringify(body) : '';
+        const rq = http.request({ host: '127.0.0.1', port: P2, path: '/control/cards' + (q || ''), method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(data) } }, (r) => { let s = ''; r.on('data', (d) => (s += d)); r.on('end', () => res(s)); });
+        rq.on('error', rej); rq.end(data);
+      });
+      const setH = (id, s) => c2('/control/set?entity=' + id + '&state=' + encodeURIComponent(s));
+      const BUILT = ['wind_down', 'movie_night', 'afterglow', 'lights_out', 'good_morning', 'focus', 'hosting', 'away', 'showcase'];
+      const DECK = BUILT.concat(['custom_1', 'custom_2', 'custom_3']);
+      const con0 = p.console.length;
+      const fake2 = spawn(process.execPath, [path.join(__dirname, 'fake-ha.js'), '--port', String(P2), '--token', TOKEN, '--never', '', '--initial', 'wind_down', '--previous', 'lights_out', '--clock', '21:18', '--card-set', 'ready', '--quiet'], { stdio: 'inherit' });
+      extra.push(fake2);
+      await sleep(900);
+      const cfg2 = Object.assign({}, cfg, { haUrl: 'ws://127.0.0.1:' + P2 + '/api/websocket' });
+      await p.inject(SHELL(cfg2));
+      await p.go(PAGE + '?time=21:18', 500);
+      i = await until((x) => x.status === 'ready' && x.dataReady && x.moods.length === DECK.length, 8000);
+      async function deck2(slug) {
+        await until((x) => x.view === 'idle', 6000);
+        await p.tap(CX, 470 * u); await sleep(900);
+        const x = await info(), idx = x.moods.indexOf(slug), at = Math.max(0, x.cur);
+        for (let k = 0; k < Math.abs(idx - at); k++) { await p.key(idx > at ? 'ArrowRight' : 'ArrowLeft'); await sleep(600); }
+        await sleep(900);
+        return idx;
+      }
+      const cardName = (idx) => p.eval('(function(){var c=document.querySelectorAll(".card")[' + idx + '];return c?c.querySelector(".name").textContent+"|"+c.querySelector(".desc").textContent+"|"+c.querySelector(".scope").textContent:""})()');
+
+      // 1) a ready slot: shown in its order, hold sets it, its marks fill
+      check('custom: the ready slots come after the built-ins in their order (110, 120, 130); a not-ready and the empty slots are not shown', i.moods.join() === DECK.join(), i.moods.join(','));
+      let idx = await deck2('custom_1');
+      const nm = await cardName(idx);
+      check('custom: the slot\'s card shows its name, card text and scope from sensor.moods_custom_1', /^Reading\|Bedroom lamps soft white \(2700 K\), 40%\.\|Bedroom/.test(nm), nm);
+      await p.shot(path.join(SHOTS, PFX + SUFFIX + '-custom-card.png'));
+      await c2('/control/calls?clear=1'); await c2('/control/actions?clear=1');
+      await p.press(CX, 485 * u, 800);
+      i = await until((x) => x.ha === 'custom_1' && x.marks && x.marks.every((m) => /:ok$/.test(m)), 6000);
+      let calls = await c2('/control/calls'), acts = await c2('/control/actions');
+      check('custom: a hold calls script.turn_on script.mood_custom_1, house_mood becomes custom_1 and its mark fills',
+        calls.length === 1 && calls[0].entity_id[0] === 'script.mood_custom_1' && i.ha === 'custom_1' && i.shown === 'custom_1' && i.marks && i.marks.join() === 'Lamps:ok',
+        JSON.stringify(calls.map((c) => c.service + ' ' + c.entity_id)) + ' ha=' + i.ha + ' marks=' + JSON.stringify(i.marks));
+      check('custom: the runner sends light.turn_on to light.role_bedroom_lamps with 2700 K and 40% (one colour key), nothing else',
+        acts.length === 1 && acts[0].service === 'light.turn_on' && acts[0].entity_id.join() === 'light.role_bedroom_lamps' && JSON.stringify(acts[0].data) === '{"color_temp_kelvin":2700,"brightness_pct":40,"transition":2}',
+        JSON.stringify(acts.map((a) => a.service + ' ' + a.entity_id + ' ' + JSON.stringify(a.data))));
+      i = await until((x) => x.view === 'idle', 9000);
+      check('custom: the face shows the custom mood', /^Reading/.test(i.status_line), '"' + i.status_line + '"');
+
+      // 5) switched off between deck open and hold: the deck is not rebuilt under the finger, and the
+      // hold is refused with the package's reason
+      await sleep(600);
+      idx = await deck2('custom_1');
+      await cards({ 1: 'reading_off' });
+      await sleep(2800);
+      i = await info();
+      const n5 = await p.eval('document.querySelectorAll(".card").length');
+      check('custom: a slot switched off while the deck is open stays on the open deck (never rebuilt under a finger)', i.view === 'deck' && n5 === DECK.length && i.moods.indexOf('custom_1') >= 0, i.view + ' ' + n5 + ' cards');
+      await p.press(CX, 485 * u, 800);
+      i = await until((x) => /switched off/.test(x.cardNote), 4000);
+      check('custom: ...a hold on it is refused with the package\'s reason', i.cardNote === 'Reading is switched off on the Moods dashboard.', '"' + i.cardNote + '"');
+      await p.key('Escape');
+      i = await until((x) => x.view === 'idle' && x.moods.indexOf('custom_1') < 0, 5000);
+      check('custom: ...and back on the face the slot has gone (it is still the house\'s mood: the face shows no mood)', i.moods.indexOf('custom_1') < 0 && i.moods.length === DECK.length - 1 && i.cur === -1, i.moods.join(',') + ' cur ' + i.cur);
+
+      // 2) not_ready on the idle face: removed after the 2 s shrink settle, with no page reload
+      await cards({ 1: 'reading' });
+      i = await until((x) => x.moods.indexOf('custom_1') >= 0, 3000);
+      check('custom: switched on again, it comes back at once (no reload)', i.moods.join() === DECK.join(), i.moods.join(','));
+      await p.eval('window.__noReload = 1');
+      await cards({ 1: 'reading_off' });
+      await sleep(1200);
+      const mid = await info();
+      i = await until((x) => x.moods.indexOf('custom_1') < 0, 4000);
+      const same = await p.eval('window.__noReload === 1');
+      check('custom: a card turned not_ready removes the slot only after the 2 s shrink settle, without a page reload', mid.moods.indexOf('custom_1') >= 0 && i.moods.indexOf('custom_1') < 0 && same === true, 'at 1.2 s ' + mid.moods.length + ', then ' + i.moods.length + ' moods; same page ' + same);
+      await cards({ 1: 'reading' });
+      await until((x) => x.moods.indexOf('custom_1') >= 0, 3000);
+
+      // 3) no news: an unavailable or removed card sensor, or a garbage card, keeps the last good card;
+      // a card of the wrong types drops the slot. Built-ins are never affected.
+      for (const [what, act] of [['unavailable (card attribute gone)', () => cards(null, '?slot=1&state=unavailable')], ['removed', () => cards({ 1: null })],
+                                 ['garbage text', () => cards(null, '?slot=1&raw=' + encodeURIComponent('{not json'))]]) {
+        await act();
+        await sleep(2800);
+        i = await info();
+        check('custom: card sensor ' + what + ': no news, the slot keeps its last card', i.moods.join() === DECK.join(), i.moods.join(','));
+        await cards({ 1: 'reading' }); await sleep(500);
+      }
+      await cards({ 1: { state: 'ready', card: { mood: 'yes', mood_slot: 'one', mood_name: ['x'], mood_touches: 'nope' } } });
+      i = await until((x) => x.moods.indexOf('custom_1') < 0, 4000);
+      check('custom: a card of the wrong types drops the slot; the built-ins are unaffected', i.moods.join() === DECK.filter((s) => s !== 'custom_1').join(), i.moods.join(','));
+      await cards({ 1: { state: 'ready', card: { mood: true, mood_slot: 1, mood_name: 'Odd', mood_touches: [{ label: 'Plug', entity: 'switch.kitchen_kettle', expect: 'on' }, { label: 'Lamp', entity: 'light.role_bedroom_lamps', expect: 'on' }], mood_palette: 'red', mood_order: 'soon' } } });
+      i = await until((x) => x.moods.indexOf('custom_1') >= 0, 3000);
+      idx = i.moods.indexOf('custom_1');
+      const odd = await p.eval('(function(){var c=document.querySelectorAll(".card")[' + idx + '];return c.querySelector(".name").textContent+"|"+Array.prototype.map.call(c.querySelectorAll(".touches .lb"),function(e){return e.textContent}).join(",")})()');
+      check('custom: a ready card with odd values degrades (defaults; a touch that is not a role entity is dropped), last by order', odd === 'Odd|Lamp' && i.moods[i.moods.length - 1] === 'custom_1', odd + ' / ' + i.moods.join(','));
+      await cards({ 1: 'reading' });
+      i = await until((x) => x.moods.join() === DECK.join(), 4000);
+
+      // 4) the slot script removed (a reload while the deck is open): a hold is refused by the existing rule
+      idx = await deck2('custom_1');
+      await c2('/control/remove?entity=script.mood_custom_1');
+      await sleep(600);
+      await c2('/control/calls?clear=1');
+      await p.press(CX, 485 * u, 800);
+      await sleep(500);
+      i = await info(); calls = await c2('/control/calls');
+      check('custom: with its slot script gone, a hold says the mood is gone and calls nothing', /gone from Home Assistant/.test(i.cardNote) && calls.length === 0, '"' + i.cardNote + '" calls ' + calls.length);
+      await p.key('Escape');
+      await c2('/control/reload');
+      i = await until((x) => x.view === 'idle' && x.moods.join() === DECK.join(), 6000);
+      check('custom: a script reload brings the slot scripts back', i.moods.join() === DECK.join(), i.moods.join(','));
+
+      // 6) windows from the card: refused outside (the reason uses the custom name), accepted inside,
+      // and vacation is still checked first
+      await c2('/control/clock?at=12:00');
+      await c2('/control/vacation?on=1');
+      await deck2('custom_2');
+      await p.press(CX, 485 * u, 800);
+      i = await until((x) => /Vacation|only runs/.test(x.cardNote), 4000);
+      check('custom: vacation mode wins over the slot\'s window', /^Vacation mode is on/.test(i.cardNote), '"' + i.cardNote + '"');
+      await c2('/control/vacation?on=0');
+      await p.key('Escape'); await sleep(1300);
+      await deck2('custom_2');
+      await p.press(CX, 485 * u, 800);
+      i = await until((x) => /only runs/.test(x.cardNote), 4000);
+      let st = await c2('/control/state');
+      check('custom: outside its window (12:00) Dusk is refused with "Dusk only runs between 17:00 and 23:00."', i.cardNote === 'Dusk only runs between 17:00 and 23:00.' && st.mood !== 'custom_2', '"' + i.cardNote + '" house ' + st.mood);
+      await p.key('Escape'); await sleep(1300);
+      await c2('/control/clock?at=21:18');
+      await c2('/control/actions?clear=1');
+      await deck2('custom_2');
+      await p.press(CX, 485 * u, 800);
+      i = await until((x) => x.ha === 'custom_2' && x.marks && x.marks.every((m) => /:ok$/.test(m)), 6000);
+      acts = await c2('/control/actions');
+      const off = (acts.find((a) => a.service === 'light.turn_off') || {}).entity_id || [];
+      check('custom: inside it (21:18) Dusk runs: loft amber, the other indoor lights off (never the loft), the diffuser on',
+        i.ha === 'custom_2' && acts.some((a) => a.service === 'light.turn_on' && a.entity_id[0] === 'light.role_loft_lamp' && JSON.stringify(a.data.rgb_color) === '[255,140,40]') &&
+        off.indexOf('light.role_loft_lamp') < 0 && off.indexOf('light.role_bedroom_lamps') >= 0 && acts.some((a) => a.service === 'switch.turn_on'),
+        'ha=' + i.ha + ' ' + JSON.stringify(acts.map((a) => a.service + ' ' + a.entity_id.join(','))));
+      i = await until((x) => x.view === 'idle', 9000);
+
+      // 5b) Undo into a cleared slot is refused (the house keeps the mood it has)
+      await deck2('wind_down');
+      await p.press(CX, 485 * u, 800);
+      i = await until((x) => x.ha === 'wind_down' && x.undo > 0, 4000);
+      const undoTo = i.undoTo;
+      await cards({ 2: 'empty' });
+      await sleep(400);
+      await p.tap(CX, 592 * u);
+      i = await until((x) => /cleared/.test(x.faceNote), 5000);
+      st = await c2('/control/state');
+      check('custom: an Undo into a slot cleared meanwhile is refused with the reason; the house stays on Wind Down',
+        undoTo === 'custom_2' && st.mood === 'wind_down' && i.faceNote === 'That custom mood was cleared on the Moods dashboard.' && i.shown === 'wind_down',
+        'undo to ' + undoTo + ', house ' + st.mood + ', "' + i.faceNote + '" shown ' + i.shown);
+      await cards({ 2: 'dusk' });
+      i = await until((x) => x.view === 'idle' && x.moods.join() === DECK.join(), 8000);
+
+      // 7) placement on this (bedroom) panel
+      const order = async (want, what, ms) => {
+        i = await until((x) => x.moods.join() === want.join(), ms || 4000);
+        check('placement: ' + what, i.moods.join() === want.join(), i.moods.join(','));
+      };
+      const without = (l, s) => l.filter((x) => [].concat(s).indexOf(x) < 0);
+      await setH('input_select.moods_focus_where', 'Not on the Bedroom Palm');
+      await order(without(DECK, 'focus'), '"Not on the Bedroom Palm" hides Focus here (after the shrink settle)');
+      await setH('input_select.moods_custom_2_where', 'Only on the Living room Palm');
+      await order(without(DECK, ['focus', 'custom_2']), '"Only on the Living room Palm" hides a slot here');
+      await setH('input_select.moods_away_where', 'First on every phone');
+      const placed = ['away'].concat(without(DECK, ['focus', 'custom_2', 'away']));
+      await order(placed, '"First on every phone" sorts Away first');
+      await setH('input_number.moods_custom_3_order', '5');
+      // Hosting (order 70) and the slots are not this panel's moods: Red room's 5 puts it first among them
+      const placed2 = without(placed, 'custom_3'); placed2.splice(placed2.indexOf('hosting'), 0, 'custom_3');
+      await order(placed2, 'order 5 moves Red room (130) ahead of Hosting (70) and Reading (110), the other moods that are not this panel\'s');
+      for (const v of ['abc', 'unavailable', '0', '1000', '5.5e9']) {
+        await setH('input_number.moods_custom_3_order', v);
+        await order(placed, 'order "' + v + '" is the usual order');
+        await setH('input_number.moods_custom_3_order', '5');
+        await until((x) => x.moods.join() === placed2.join(), 3000);
+      }
+      await c2('/control/remove?entity=input_number.moods_custom_3_order');
+      await order(placed, 'a removed order helper is the usual order');
+      for (const v of ['unavailable', 'Not on the Bedroom palm', '']) {
+        await setH('input_select.moods_focus_where', v);
+        await order(['away'].concat(without(DECK, ['custom_2', 'away'])), 'where ' + JSON.stringify(v) + ' is the usual rule (Focus back)');
+        await setH('input_select.moods_focus_where', 'Not on the Bedroom Palm');
+        await until((x) => x.moods.indexOf('focus') < 0, 4000);
+      }
+      await p.shot(path.join(SHOTS, PFX + SUFFIX + '-placed.png'));
+      // hiding every mood is ignored (logged once)
+      for (const s of DECK.concat(['custom_4', 'custom_5', 'custom_6'])) await setH('input_select.moods_' + s + '_where', 'Hidden on every phone');
+      await sleep(3000);
+      i = await info();
+      const warned = (await shellCalls('log')).some((c) => /hiding ignored/.test(c.a[1]));
+      check('placement: hiding every mood is ignored here (the usual deck), and logged', i.moods.join() === DECK.join() && i.hiddenHere.length === 0 && warned, i.moods.join(',') + ' warned=' + warned);
+      for (const s of DECK.concat(['custom_4', 'custom_5', 'custom_6'])) await setH('input_select.moods_' + s + '_where', 'Usual (as the mood says)');
+      await order(DECK, 'every helper back to Usual: the usual deck');
+
+      // 8) a hidden mood that is current stays (last, flagged), and the face shows it
+      st = await c2('/control/state');
+      const curS = st.mood;
+      await setH('input_select.moods_' + curS + '_where', 'Hidden on every phone');
+      await sleep(2800);
+      i = await info();
+      check('placement: the current mood (' + curS + '), hidden, stays on the deck, last, flagged hiddenHere; the face shows it',
+        i.moods[i.moods.length - 1] === curS && i.hiddenHere.join() === curS && i.shown === curS && i.cur === i.moods.length - 1 && i.status_line.length > 0 && !/Tap to choose/.test(i.status_line), i.moods.join(',') + ' hidden ' + i.hiddenHere + ' "' + i.status_line + '"');
+      await c2('/control/outside?slug=focus');
+      i = await until((x) => x.shown === 'focus' && x.moods.indexOf(curS) < 0, 5000);
+      check('placement: once the house moves on (voice sets Focus), the hidden mood goes', i.moods.indexOf(curS) < 0 && i.shown === 'focus', i.moods.join(','));
+      await setH('input_select.moods_' + curS + '_where', 'Usual (as the mood says)');
+      await until((x) => x.moods.indexOf(curS) >= 0, 3000);
+      await setH('input_select.moods_hosting_where', 'Not on the Bedroom Palm');
+      await until((x) => x.moods.indexOf('hosting') < 0, 4000);
+      const sawChoose = [];
+      await c2('/control/outside?slug=hosting');
+      for (let k = 0; k < 12; k++) { const x = await info(); sawChoose.push(/Tap to choose/.test(x.status_line) ? 1 : 0); await sleep(100); }
+      i = await until((x) => x.shown === 'hosting' && x.hiddenHere.join() === 'hosting', 4000);
+      check('placement: a mood hidden here that becomes current from outside is shown at once, last, and the face shows it (no "Tap to choose")',
+        i.moods[i.moods.length - 1] === 'hosting' && /Hosting/.test(i.status_line) && sawChoose.indexOf(1) < 0, i.moods.join(',') + ' "' + i.status_line + '"');
+
+      // 9) a boot with Home Assistant away: the v2 cache shows the slots and placement
+      await setH('input_select.moods_away_where', 'First on every phone');
+      i = await until((x) => x.moods[0] === 'away', 4000);
+      await sleep(600);
+      const want9 = i.moods.join();
+      const keys = await p.eval('JSON.stringify(Object.keys(localStorage))');
+      await c2('/control/refuse?ms=12000'); await c2('/control/drop');
+      await p.go(PAGE + '?time=21:18', 1500);
+      i = await info();
+      check('cache: a boot with Home Assistant away draws the deck from the v2 cache, slots and placement included', i.status !== 'ready' && i.moods.join() === want9 && /moods\.cache\.v2/.test(keys) && !/moods\.cache\.v1"/.test(keys), i.status + ' ' + i.moods.join(',') + ' keys ' + keys);
+      i = await until((x) => x.status === 'ready', 20000, 250);
+      await setH('input_select.moods_away_where', 'Usual (as the mood says)');
+      await setH('input_select.moods_hosting_where', 'Usual (as the mood says)');
+      await setH('input_select.moods_focus_where', 'Usual (as the mood says)');
+      await setH('input_select.moods_custom_2_where', 'Usual (as the mood says)');
+      // a v1 cache (the 0.1.0 key) is ignored
+      await p.eval('localStorage.removeItem("moods.cache.v2"); localStorage.setItem("moods.cache.v1", JSON.stringify({t: Date.now(), panel: "bedroom", a: {"script.mood_bogus": {s: "off", a: {mood: true, mood_name: "Bogus"}}}}))');
+      await c2('/control/refuse?ms=6000'); await c2('/control/drop');
+      await p.go(PAGE + '?time=21:18', 1200);
+      i = await info();
+      check('cache: a v1 cache is not read', i.moods.length === 0 && i.status !== 'ready', i.moods.join(',') + ' ' + i.status);
+      await until((x) => x.status === 'ready', 20000, 250);
+
+      // mock mode with ?mockset=custom: a ready slot, a switched-off one, and placement
+      await p.go(PAGE + '?mock=1&mockset=custom&time=21:18', 500);
+      i = await until((x) => x.status === 'ready' && x.dataReady, 8000);
+      check('mock mode ?mockset=custom: Good Morning first (order 5), Movie Night hidden here, Reading shown, Dusk (switched off) not',
+        i.moods.join() === 'good_morning,wind_down,afterglow,lights_out,custom_1', i.moods.join(','));
+      await p.tap(CX, 470 * u); await sleep(900);
+      { const x = await info(), gi = x.moods.indexOf('custom_1'), at0 = Math.max(0, x.cur); for (let k = 0; k < Math.abs(gi - at0); k++) { await p.key(gi > at0 ? 'ArrowRight' : 'ArrowLeft'); await sleep(600); } }
+      await sleep(900);
+      await p.press(CX, 485 * u, 800);
+      i = await until((x) => x.ha === 'custom_1' && x.marks && x.marks.every((m) => /:ok$/.test(m)), 6000);
+      check('...and Reading can be set there, its mark fills', i.ha === 'custom_1' && i.marks && i.marks.join() === 'Lamps:ok', i.ha + ' ' + JSON.stringify(i.marks));
+      await p.shot(path.join(SHOTS, PFX + SUFFIX + '-mock-custom.png'));
+
+      // 10) a house from before custom moods (no slots, no cards, no placement helpers): today's deck
+      const fake3 = spawn(process.execPath, [path.join(__dirname, 'fake-ha.js'), '--port', String(P3), '--token', TOKEN, '--never', '', '--initial', 'wind_down', '--previous', 'lights_out', '--clock', '21:18', '--old-house', '--quiet'], { stdio: 'inherit' });
+      extra.push(fake3);
+      await sleep(900);
+      await p.inject(SHELL(Object.assign({}, cfg, { haUrl: 'ws://127.0.0.1:' + P3 + '/api/websocket' })));
+      await p.go(PAGE + '?time=21:18', 500);
+      i = await until((x) => x.status === 'ready' && x.dataReady && x.moods.length > 0, 8000);
+      check('old house (no custom mood entities at all): exactly the 0.1.0 deck', i.moods.join() === BUILT.join() && i.shown === 'wind_down', i.moods.join(','));
+
+      // 11) the 0.1.0 build (app.js and moods.js from before this change) against the house with slots
+      // and placement: no slot cards, placement ignored
+      let oldRev = '';
+      try {
+        const { execFileSync } = require('child_process');
+        const R = path.join(__dirname, '..', '..');
+        const revs = execFileSync('git', ['log', '--format=%H', '--', 'ui/app.js'], { cwd: R }).toString().trim().split('\n');
+        for (const r of revs) { if (execFileSync('git', ['show', r + ':./ui/app.js'], { cwd: R }).toString().indexOf('entity_globs') < 0) { oldRev = r; break; } }
+        if (oldRev) {
+          const tmpUi = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-oldui-'));
+          const UI = path.join(__dirname, '..');
+          fs.readdirSync(UI).forEach((f) => { const s = path.join(UI, f); if (f !== 'dev' && f !== 'fonts' && fs.statSync(s).isFile()) fs.copyFileSync(s, path.join(tmpUi, f)); });
+          ['app.js', 'moods.js'].forEach((f) => fs.writeFileSync(path.join(tmpUi, f), execFileSync('git', ['show', oldRev + ':./ui/' + f], { cwd: R })));
+          const srv = http.createServer((rq, rs) => {
+            const f = path.join(tmpUi, path.basename(new URL(rq.url, 'http://x').pathname) || 'index.html');
+            fs.readFile(f, (e, d) => { if (e) { rs.writeHead(404); rs.end(); return; } rs.writeHead(200, { 'content-type': /\.js$/.test(f) ? 'text/javascript' : /\.css$/.test(f) ? 'text/css' : 'text/html' }); rs.end(d); });
+          });
+          await new Promise((r) => srv.listen(P4, '127.0.0.1', r));
+          extra.push({ kill: () => { srv.close(); fs.rmSync(tmpUi, { recursive: true, force: true }); } });
+          await setH('input_select.moods_away_where', 'First on every phone');
+          await p.inject(SHELL(cfg2));
+          await p.go('http://127.0.0.1:' + P4 + '/index.html?time=21:18', 500);
+          i = await until((x) => x.status === 'ready' && x.dataReady && x.moods.length > 0, 8000);
+          check('the 0.1.0 build (app.js and moods.js at ' + oldRev.slice(0, 7) + ') with slots and placement present: no slot cards, placement ignored', i.moods.join() === BUILT.join(), i.moods.join(','));
+          await setH('input_select.moods_away_where', 'Usual (as the mood says)');
+        }
+      } catch (e) { console.log('old build check: ' + e.message); }
+      if (!oldRev) check('the 0.1.0 build check found the old app.js in git', false, 'no commit of ui/app.js without entity_globs');
+
+      const ex2 = p.console.slice(con0).filter((l) => /EXCEPTION|error/i.test(l));
+      check('custom: no exceptions in the page', ex2.length === 0, ex2.join(' | '));
+    }
   } finally {
     const all = await ctl('/control/calls').catch(() => []);
     console.log('\nservice calls still in the fake log (since the last clear): ' + JSON.stringify(all.map((c) => c.domain + '.' + c.service + ' ' + c.entity_id.join(','))));
     await b.close();
     fake.kill();
+    extra.forEach((x) => { try { x.kill(); } catch (e) {} });
     const failed = results.filter((r) => !r.ok);
     console.log('\n' + (results.length - failed.length) + '/' + results.length + ' checks passed' + (failed.length ? '; FAILED: ' + failed.map((f) => f.name).join('; ') : ''));
     process.exitCode = failed.length ? 1 : 0;

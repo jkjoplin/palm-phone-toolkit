@@ -20,7 +20,7 @@ Palm (the company) is gone, and the phone is stuck on Android 8.1 and a 2019 sec
 
 ## Palm Moods
 
-[homeassistant/moods/](homeassistant/moods/) turns a rooted PVG100 into a mood controller for Home Assistant. The phone shows a clock; tap it, swipe through moods like Wind Down, Movie Night or Lights Out, and press and hold to set one. The moods are Home Assistant scripts in one package, so voice, automations and every phone share them, and a mood names rooms ("roles") rather than devices. It comes with a Kotlin home app, a web UI built for the Palm's Chrome 101 WebView, the Home Assistant package with eight example moods and a settings dashboard, and a provisioning script.
+[homeassistant/moods/](homeassistant/moods/) turns a rooted PVG100 into a mood controller for Home Assistant. The phone shows a clock; tap it, swipe through moods like Wind Down, Movie Night or Lights Out, and press and hold to set one. The moods are Home Assistant scripts in one package, so voice, automations and every phone share them, and a mood names rooms ("roles") rather than devices. It comes with a Kotlin home app, a web UI built for the Palm's Chrome 101 WebView, the Home Assistant package with eight example moods and a settings dashboard (where you can also make up to six moods of your own, tune the built-in ones with sliders, and choose which phones show each mood), and a provisioning script.
 
 <p><img src="homeassistant/moods/docs/img/deck-movie-night.jpg" alt="The Movie Night card on a Palm" width="240"> <img src="homeassistant/moods/docs/img/idle-face.jpg" alt="The idle clock face" width="240"></p>
 

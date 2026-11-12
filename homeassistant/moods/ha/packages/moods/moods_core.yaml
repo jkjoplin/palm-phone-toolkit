@@ -49,8 +49,9 @@ template:
       #   - it was set at or after EVENING_FROM (local hour) and it is not yet
       #     HOLD_UNTIL (local hour) the next morning.
       # So a Hosting set at 18:00 holds until 01:00; one set at 14:00 holds
-      # until 18:00. Existing automations such as the 22:30 "Outdoor lights
-      # night off" can check it; see ha/README.md for the exact line.
+      # until 18:00. Your own automations, such as a night-off that turns the
+      # outdoor lights off (22:30 in the example), can check it; see
+      # ha/README.md for the exact line.
       # The mood is found by entity id (script.mood_<house_mood>), the same
       # slug mood_begin writes, never by the mood_slug attribute: a copied
       # file that kept a stale mood_slug cannot hold for the wrong mood.
@@ -87,8 +88,9 @@ script:
     description: >-
       Records a mood as current (moving the old one to previous) and stops any
       other mood that is still running. Refuses every mood except away while
-      Vacation mode is on, and a mood with a time window (customize
-      attribute mood_window) outside that window, and says why in
+      Vacation mode is on, a custom mood slot whose card is not ready,
+      and a mood with a time window (customize attribute mood_window, or a
+      slot's card) outside that window, and says why in
       input_text.house_mood_notice. When two moods are chosen at almost the
       same moment, the newer one wins.
     icon: mdi:palette-outline
@@ -109,6 +111,14 @@ script:
           current: "{{ states('input_text.house_mood') }}"
           current_clean: "{{ '' if current in ['unknown', 'unavailable'] else current }}"
           vacation_on: "{{ is_state('input_boolean.vacation_mode', 'on') }}"
+          # Custom mood slots (moods_custom.yaml): script.mood_custom_1..6 carry
+          # mood_slot (not mood: true), and their card lives in the attribute
+          # `card` of sensor.moods_custom_<n>. For every other caller is_slot
+          # is false and slot_card is {}, so nothing below changes for them.
+          is_slot: "{{ slug_clean is match('^custom_[1-6]$') and state_attr(caller, 'mood_slot') is not none }}"
+          slot_card: >-
+            {%- set c = state_attr('sensor.moods_' ~ slug_clean, 'card') if slug_clean is match('^custom_[1-6]$') else none %}
+            {{ c if c is mapping else {} }}
           refused:
             proceed: false
             reason: Vacation mode is on, so only Away can run.
@@ -133,14 +143,14 @@ script:
       # newer choice wins, so the caller steps aside without writing anything.
       - variables:
           my_start: "{{ as_timestamp(state_attr(caller, 'last_triggered'), 0) }}"
+          # Mood scripts (mood: true) and custom mood slots (mood_slot).
           others_running: >-
-            {{ states.script
-               | selectattr('attributes.mood', 'defined')
-               | selectattr('attributes.mood', 'eq', true)
-               | selectattr('state', 'eq', 'on')
-               | map(attribute='entity_id')
-               | reject('eq', caller)
-               | list }}
+            {%- set ns = namespace(ids=[]) %}
+            {%- for s in states.script if s.state == 'on' and s.entity_id != caller
+                  and (s.attributes.get('mood') == true or s.attributes.get('mood_slot') is not none) %}
+              {%- set ns.ids = ns.ids + [s.entity_id] %}
+            {%- endfor %}
+            {{- ns.ids }}
           newer_running: >-
             {%- set ns = namespace(ids=[]) %}
             {%- for e in others_running %}
@@ -175,9 +185,34 @@ script:
               reason: "{{ refused.reason }}"
           - stop: Vacation mode is on; only Away may run
             response_variable: refused
+      # A custom mood slot whose card is not ready (cleared, switched off on the
+      # dashboard, nothing to do, or a card that cannot be read) is refused like
+      # vacation mode, with the card's own reason. After vacation (which stays
+      # first), before the time window.
+      - variables:
+          slot_refused:
+            proceed: false
+            reason: "{{ ((slot_card.get('mood_reason') or 'That custom mood is not ready on the Moods dashboard.') | string | replace('|', ' '))[:200] }}"
+      - if:
+          - condition: template
+            value_template: "{{ is_slot and slot_card.get('mood') != true }}"
+        then:
+          - action: input_text.set_value
+            target:
+              entity_id: input_text.house_mood_notice
+            data:
+              value: "{{ (slug_clean ~ '|' ~ now().isoformat() ~ '|' ~ slot_refused.reason)[:255] }}"
+            continue_on_error: true
+          - event: mood_refused
+            event_data:
+              slug: "{{ slug_clean }}"
+              reason: "{{ slot_refused.reason }}"
+          - stop: The custom mood is not ready
+            response_variable: slot_refused
       # A mood's own time window (after the vacation check, which stays first).
       # Optional customize attribute on the mood's script, read from the
-      # caller's entity id (never by mood_slug):
+      # caller's entity id (never by mood_slug); for a custom mood slot, the
+      # window in its card:
       #   mood_window: { from: "05:00", to: "11:00" }
       # Local time, from inclusive, to exclusive; from later than to crosses
       # midnight ("22:00" to "02:00"). Quote both times: unquoted 11:00 is a
@@ -189,7 +224,7 @@ script:
       # window before deploy.
       - variables:
           win_state: >-
-            {%- set w = state_attr(caller, 'mood_window') %}
+            {%- set w = slot_card.get('mood_window') if is_slot else state_attr(caller, 'mood_window') %}
             {%- set hhmm = '^([01][0-9]|2[0-3]):[0-5][0-9]$' %}
             {%- if w is none %}none
             {%- elif not (w is mapping) %}bad
@@ -205,8 +240,8 @@ script:
               {%- endif %}
             {%- endif %}
           window_reason: >-
-            {%- set w = state_attr(caller, 'mood_window') %}
-            {%- set n = state_attr(caller, 'mood_name') %}
+            {%- set w = slot_card.get('mood_window') if is_slot else state_attr(caller, 'mood_window') %}
+            {%- set n = slot_card.get('mood_name') if is_slot else state_attr(caller, 'mood_name') %}
             {%- set a = state_attr(caller, 'friendly_name') %}
             {%- if n is string and n | trim != '' %}{% set name = n | trim %}
             {%- elif a is string and a | trim != '' %}{% set name = a | replace('Mood: ', '') | trim %}
@@ -323,15 +358,18 @@ script:
           entity_id: "{{ target_script }}"
 
 automation:
-  # Outdoor lights off late. The existing 22:30 "Outdoor lights night off" is
-  # not edited by this package; this adds the two cases it cannot cover:
+  # Outdoor lights off late. Your own night-off automation (the example
+  # assumes one that turns the outdoor lights off at 22:30; change the
+  # "22:30:00" below to match yours) is not edited by this package; this adds
+  # the two cases it cannot cover:
   #   1. The outdoor hold ends after 22:30 while the holding mood (Hosting) is
   #      still current: turn the outdoor roles off then, as the night-off would
   #      have. If the mood was changed instead, the new mood decides, so this
   #      does nothing (e.g. Hosting -> Afterglow keeps Afterglow's patio).
   #   2. At 01:00, if the current mood lit the outdoors (customize attribute
-  #      mood_lights_outdoor: true, e.g. Afterglow's patio) and no hold is on,
-  #      turn the outdoor roles off so they do not burn all night.
+  #      mood_lights_outdoor: true, e.g. Afterglow's patio, or a custom mood
+  #      whose last run lit an outdoor role) and no hold is on, turn the
+  #      outdoor roles off so they do not burn all night.
   - id: moods_outdoor_lights_off_late
     alias: "Moods: outdoor lights off late"
     description: >-
@@ -366,11 +404,19 @@ automation:
             conditions:
               - condition: trigger
                 id: late
+              # A custom mood (custom_1..6) counts only by what its last run
+              # did: script.moods_custom_run writes the slot's slug to
+              # input_text.custom_mood_lit_outdoor when one of its "on" steps
+              # lit an outdoor role, and empties it otherwise. So editing,
+              # switching off or clearing the slot after the run changes
+              # nothing here, and neither does its card being unreadable.
               - condition: template
                 value_template: >-
+                  {%- set cur = states('input_text.house_mood') %}
                   {{ not is_state('binary_sensor.mood_outdoor_hold', 'on')
-                     and state_attr('script.mood_' ~ states('input_text.house_mood'),
-                                    'mood_lights_outdoor') == true }}
+                     and (state_attr('script.mood_' ~ cur, 'mood_lights_outdoor') == true
+                          or (cur is match('^custom_[1-6]$')
+                              and states('input_text.custom_mood_lit_outdoor') == cur)) }}
     actions:
       - action: light.turn_off
         target:

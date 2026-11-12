@@ -4,7 +4,8 @@
    - subscribe_entities with a filter, so the phone only receives the entities it shows
      (HA 2026.11: no admin needed; states are filtered by the user's read permission).
      Change events are partial diffs and are merged here, never replaced.
-   - call_service, ping every 30 s (a missing pong within 10 s drops the socket), reconnect with
+   - call_service, sync() (a ping whose pong proves the store has everything HA sent before it),
+     ping every 30 s (a missing pong within 10 s drops the socket), reconnect with
      backoff 1 s -> 30 s, kick() to retry at once (Wi-Fi back, app resumed), probe() to check a
      quiet socket without touching the backoff (any other network event).
    The token is held in this closure only; nothing here logs it or the config. */
@@ -21,7 +22,7 @@
     var self = this;
     var ws = null, nextId = 1, pending = {}, subs = {}, status = 'idle', attempt = 0;
     var tRetry = 0, tPing = 0, tPong = 0, tConnect = 0, stopped = false;
-    var lastRx = 0;
+    var lastRx = 0, pingId = 0;
 
     function setStatus(s, detail) { if (status !== s) { status = s; onStatus(s, detail); } }
     function clearTimers() { clearTimeout(tPing); clearTimeout(tPong); clearTimeout(tConnect); tPing = tPong = tConnect = 0; }
@@ -51,7 +52,7 @@
       if (m.type === 'auth_required') { raw(sock, { type: 'auth', access_token: token }); return; }
       if (m.type === 'auth_invalid') { authFailed(sock); return; }
       if (m.type === 'auth_ok') { ready(sock); return; }
-      if (m.type === 'pong') { resolve(m.id, true, null); clearTimeout(tPong); tPong = 0; return; }
+      if (m.type === 'pong') { resolve(m.id, true, null); if (m.id === pingId) { clearTimeout(tPong); tPong = 0; } return; }
       if (m.type === 'result') { resolve(m.id, m.success !== false, m.success === false ? (m.error || { code: 'unknown', message: 'failed' }) : m.result); return; }
       if (m.type === 'event') {
         for (var k in subs) {
@@ -117,7 +118,9 @@
     function ping() {
       var sock = ws;
       if (!sock || status !== 'ready') return;
-      send({ type: 'ping' }).promise.catch(function () {});
+      var r = send({ type: 'ping' });
+      r.promise.catch(function () {});
+      pingId = r.id;   // only this ping's pong clears its timeout (a sync() pong may come first)
       clearTimeout(tPong);
       tPong = setTimeout(function () {
         // no pong: the socket may look open long after Wi-Fi went away
@@ -137,7 +140,7 @@
       var id = nextId++;
       msg.id = id;
       var pr = new Promise(function (res, rej) { pending[id] = { resolve: res, reject: rej }; });
-      if (!ws || status !== 'ready' || !raw(ws, msg)) { var p = pending[id]; delete pending[id]; p.reject({ code: 'disconnected', message: 'not connected' }); }
+      if (!ws || status !== 'ready' || !raw(ws, msg)) { var p = pending[id]; delete pending[id]; p.reject({ code: 'disconnected', message: 'not connected', unsent: true }); }
       return { id: id, promise: pr };
     }
 
@@ -154,6 +157,16 @@
       lost(s, 'restart');
     };
     this.ready = function () { return status === 'ready'; };
+    /* Resolves once HA has answered a ping sent now. HA sends in order over one TCP stream, so by then
+       everything it sent before the ping (every state diff) has been through the store: the store is
+       current. Rejects when the link is down or goes with it; a pong missing for 10 s drops the socket. */
+    this.sync = function () {
+      var sock = ws;
+      if (!sock || status !== 'ready') return Promise.reject({ code: 'disconnected', message: 'not connected', unsent: true });
+      var r = send({ type: 'ping' });
+      var t = setTimeout(function () { if (ws === sock) { try { sock.close(); } catch (e) {} lost(sock, 'no pong'); } }, PONG_TIMEOUT_MS);
+      return r.promise.then(function (v) { clearTimeout(t); return v; }, function (e) { clearTimeout(t); throw e; });
+    };
     /* a hint that the network may have changed (Wi-Fi gone, a new RSSI): if up and quiet, ping.
        Never touches the backoff, so routine events cannot turn it into a tight retry loop. */
     this.probe = function () { if (status === 'ready' && Date.now() - lastRx > 5000) ping(); };

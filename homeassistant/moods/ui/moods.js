@@ -122,11 +122,22 @@
   }
 
   /* ---------- attributes -> mood ---------- */
+  /* the index just after the first k characters of v, counted as Home Assistant counts them (code
+     points: an emoji is one, not two), so a cut never splits a surrogate pair */
+  function cpCut(v, k) {
+    var i = 0, n = 0, c;
+    while (i < v.length && n < k) {
+      c = v.charCodeAt(i);
+      i += (c >= 0xD800 && c <= 0xDBFF && i + 1 < v.length && (v.charCodeAt(i + 1) & 0xFC00) === 0xDC00) ? 2 : 1;
+      n++;
+    }
+    return i;
+  }
   function str(v, max) {
     if (typeof v === 'number' && isFinite(v)) v = String(v);
     if (typeof v !== 'string') return '';
     v = v.replace(/\s+/g, ' ').trim();
-    return v.length > max ? v.slice(0, max - 1).trim() + '…' : v;
+    return cpCut(v, max) < v.length ? v.slice(0, cpCut(v, max - 1)).trim() + '…' : v;
   }
   function truthy(v) { return v === true || v === 'true' || v === 'True' || v === 1; }
   function titleCase(s) { return s.replace(/_/g, ' ').replace(/\b[a-z]/g, function (m) { return m.toUpperCase(); }); }
@@ -138,10 +149,36 @@
     return v.trim().toLowerCase();
   }
 
-  /* returns a mood object, or null to skip the entity */
-  function parse(entityId, attrs) {
+  /* A custom mood slot (made on the Moods dashboard): its script carries mood_slot (and no mood
+     key), and its card is the `card` attribute of sensor.moods_custom_<n>. The card's mood keys are
+     read like customize attributes, and only those keys; its touches must be role entities. */
+  var MOOD_KEYS = ['mood_name', 'mood_tagline', 'mood_status', 'mood_scope', 'mood_glyph', 'mood_palette', 'mood_night', 'mood_order', 'mood_panels', 'mood_touches'];
+  var ROLE_RE = /^(light|switch|binary_sensor)\.role_[a-z0-9_]+$/;
+  function plain(o) { return !!o && typeof o === 'object' && !Array.isArray(o); }
+  function slotAttrs(entityId, attrs, card) {
+    var n = attrs.mood_slot;
+    if (typeof n !== 'number' || n !== Math.floor(n) || n < 1 || n > 9) return null;
+    if (entityId !== 'script.mood_custom_' + n) return null;
+    if (!plain(card) || card.mood !== true || Number(card.mood_slot) !== n) return null;
+    var a = { friendly_name: '' };
+    MOOD_KEYS.forEach(function (k) { if (Object.prototype.hasOwnProperty.call(card, k)) a[k] = card[k]; });
+    a.mood = true;
+    var t = a.mood_touches;
+    if (plain(t)) t = [t];
+    a.mood_touches = Array.isArray(t) ? t.filter(function (x) { return plain(x) && typeof x.entity === 'string' && ROLE_RE.test(x.entity.trim()); }) : [];
+    return a;
+  }
+
+  /* returns a mood object, or null to skip the entity. card: a slot's card (custom moods only) */
+  function parse(entityId, attrs, card) {
     if (typeof entityId !== 'string' || !/^script\./.test(entityId) || !ENTITY_RE.test(entityId)) return null;
-    if (!attrs || typeof attrs !== 'object' || !truthy(attrs.mood)) return null;
+    if (!attrs || typeof attrs !== 'object') return null;
+    var slot = 0;
+    if (!truthy(attrs.mood)) {
+      attrs = slotAttrs(entityId, attrs, card);
+      if (!attrs) return null;
+      slot = Number(card.mood_slot);
+    }
     // The slug is the script's own name after mood_, exactly as the package writes house_mood
     // (mood_begin takes it from this.entity_id). mood_slug is only a cross-check: a file copied
     // from another mood that kept the old mood_slug must still be its own mood.
@@ -170,7 +207,7 @@
     var pal = palette(attrs.mood_palette);
     var night = truthy(attrs.mood_night);
     return {
-      id: entityId, slug: slug, name: name, slugMismatch: said && said !== slug ? said : '',
+      id: entityId, slug: slug, name: name, slugMismatch: said && said !== slug ? said : '', slot: slot,
       tagline: str(attrs.mood_tagline, 120),
       order: order, scope: str(attrs.mood_scope, 24), panels: panels,
       glyph: str(attrs.mood_glyph, 40), status: str(attrs.mood_status, 40),
@@ -178,25 +215,91 @@
     };
   }
 
-  /* every script with mood: true, this panel's moods first, then by mood_order, then name */
-  function fromStates(get, ids, panel) {
+  /* a panel name as a key, the way the panel settings ids are built (Living room -> living_room) */
+  function panelKey(s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '').slice(0, 32); }
+  /* "Where it shows" (input_select.moods_<slug>_where), matched by exact text, for the panel with key
+     pkey: 'first' (before everything), 'panel' (with this panel's moods), 'hide', or '' (the usual
+     mood_panels rule: the first option, missing, unknown, or any other text) */
+  var PLACE_RE = /^(Only on|Not on) the (.+) Palm$/;
+  function placeRule(where, pkey) {
+    if (typeof where !== 'string') return '';
+    if (where === 'First on every phone') return 'first';
+    if (where === 'Hidden on every phone') return 'hide';
+    var m = PLACE_RE.exec(where);
+    if (!m) return '';
+    var here = panelKey(m[2]) === pkey && pkey !== '';
+    if (m[1] === 'Only on') return here ? 'panel' : 'hide';
+    return here ? 'hide' : '';
+  }
+  /* "Order in the deck" (input_number.moods_<slug>_order): a number from 1 to 999 replaces mood_order;
+     0 (usual), anything else or nothing keeps it */
+  function placeOrder(v) {
+    if (typeof v === 'string') v = v.trim() === '' ? NaN : Number(v);
+    return typeof v === 'number' && isFinite(v) && v >= 1 && v <= 999 ? v : null;
+  }
+
+  /* every mood (scripts with mood: true, and ready custom mood slots), sorted: first-on-every-phone,
+     then this panel's moods, then the rest; within each by mood_order, then name.
+     opts (optional; without it this is the 0.1.0 deck):
+       card(n)     the card of slot n (an object), or null
+       place(slug) { where, order }: the mood's placement helpers' states
+       current     the slug (or slugs) the house has now: never dropped by hiding (sorted last, hiddenHere)
+     Hiding that would leave no mood is ignored (the returned list has hidingIgnored = true).
+     The returned list has hid = how many moods placement hid here (dropped or kept as hiddenHere). */
+  function fromStates(get, ids, panel, opts) {
+    opts = opts || {};
     var out = [], seen = {};
     ids.forEach(function (id) {
       var st = get(id);
       var m = null;
-      try { m = st ? parse(id, st.a) : null; } catch (e) { m = null; }
+      try {
+        var a = st ? st.a : null, card = null;
+        if (a && typeof a === 'object' && !truthy(a.mood) && a.mood_slot != null && typeof opts.card === 'function') card = opts.card(Number(a.mood_slot));
+        m = a ? parse(id, a, card) : null;
+      } catch (e) { m = null; }
       if (!m || seen[m.id]) return;
       seen[m.id] = 1;
       out.push(m);
     });
     panel = String(panel || '').toLowerCase();
+    var pkey = panelKey(panel);
+    var keep = [].concat(opts.current == null ? [] : opts.current).map(function (s) { return String(s); });
+    var shown = 0;
+    out.forEach(function (m) {
+      var p = null;
+      if (typeof opts.place === 'function') { try { p = opts.place(m.slug); } catch (e) { p = null; } }
+      var rule = p && typeof p === 'object' ? placeRule(p.where, pkey) : '';
+      var o = p && typeof p === 'object' ? placeOrder(p.order) : null;
+      if (o != null) m.order = o;
+      m.usual = m.panels.indexOf(panel) >= 0 ? 0 : 1;
+      m.group = rule === 'first' ? -1 : rule === 'panel' ? 0 : m.usual;
+      m.hide = rule === 'hide';
+      m.hiddenHere = false;
+      if (!m.hide) shown++;
+    });
+    var hid = 0, ignored = false;
+    if (shown === 0 && out.length) ignored = true;     // hiding every mood: ignore hiding here
+    else {
+      out = out.filter(function (m) {
+        if (!m.hide) return true;
+        hid++;
+        if (keep.indexOf(m.slug) < 0) return false;
+        m.hiddenHere = true; m.group = 2;                // the current mood stays, last, so the face tells the truth
+        return true;
+      });
+    }
     out.sort(function (a, b) {
-      var pa = a.panels.indexOf(panel) >= 0 ? 0 : 1, pb = b.panels.indexOf(panel) >= 0 ? 0 : 1;
-      if (pa !== pb) return pa - pb;
+      if (a.group !== b.group) return a.group - b.group;
       if (a.order !== b.order) return a.order - b.order;
       return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
     });
-    out = out.slice(0, MAX_MOODS);
+    if (out.length > MAX_MOODS) {
+      var cut = out.slice(MAX_MOODS).filter(function (m) { return m.hiddenHere; });
+      out = out.slice(0, MAX_MOODS - cut.length).concat(cut);
+    }
+    out.forEach(function (m) { delete m.usual; delete m.group; delete m.hide; });
+    out.hid = hid;
+    out.hidingIgnored = ignored;
     // generated skies take their counter-light corner from their place in the deck
     out.forEach(function (m, i) { m.sky = sky(m.pal, m.slug, m.night, i); });
     return out;
@@ -205,14 +308,14 @@
   /* signature: rebuild the deck only when something visible changed */
   function signature(list) {
     return JSON.stringify(list.map(function (m) {
-      return [m.id, m.slug, m.name, m.tagline, m.scope, m.glyph, m.status, m.night, m.touches, toHex(m.pal.base), toHex(m.pal.accent), toHex(m.pal.ink),
+      return [m.id, m.slug, m.name, m.tagline, m.scope, m.glyph, m.status, m.night, !!m.hiddenHere, m.touches, toHex(m.pal.base), toHex(m.pal.accent), toHex(m.pal.ink),
         m.sky.map(function (g) { return [g[0], toHex(g[1])].concat(g.slice(2).map(function (v) { return Math.round(v * 1000) / 1000; })); })];
     }));
   }
 
   window.Moods = {
     ENTITY_RE: ENTITY_RE, DEFAULT_PALETTE: DEFAULT_PALETTE,
-    parse: parse, fromStates: fromStates, signature: signature,
+    parse: parse, fromStates: fromStates, signature: signature, placeRule: placeRule, placeOrder: placeOrder, panelKey: panelKey,
     palette: palette, sky: sky, layerBackground: layerBackground,
     hex: hex, toHex: toHex, rgba: rgba, mix: mix, Y: Y
   };

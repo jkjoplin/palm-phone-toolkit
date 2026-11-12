@@ -20,12 +20,27 @@
 # the first option of each setting is exactly the mood's fallback and that
 # every option is inside the mood's range.
 #
+# The LAST option of each of the seven mood settings is "Custom (sliders
+# below)". With it chosen, and once the sliders have been put at Usual
+# (input_boolean.moods_sliders_seeded on), the numbers are the states of the
+# mood's sliders, input_number.moods_<slug>_<setting>_1, _2 (a trailing ".0"
+# dropped), and go through exactly the same check: a slider that is unknown,
+# unavailable, nan, a decimal or out of range gives ALL of today's values, and
+# so does Custom before the seeding. Each slider's min and max are the mood's
+# range (lint.js), so a slider move or set_value cannot leave it; the one value
+# set_value lets through is nan, which an automation below puts back at Usual
+# at once (a restart would otherwise bring it back at the slider's min).
+# Append any new preset BEFORE "Custom (sliders below)", which stays last.
+#
 # The helper ids are built from the mood's own slug: input_select.moods_<slug>_look
-# (and _bed for Lights Out). A copied mood file therefore finds no setting and
-# runs on its own built-in values until it is given one here.
+# (and _bed for Lights Out), and the sliders from the same name. A copied mood
+# file therefore finds no setting and runs on its own built-in values until it
+# is given one here.
 #
 # The phones read their own two settings (input_select.moods_panel_<panel>_*):
-# night hours and the day brightness of the screen. The first option is again
+# night hours and the day brightness of the screen. They also read, for every
+# mood, where it shows (input_select.moods_<slug>_where) and its order in the
+# deck (input_number.moods_<slug>_order; 0 = the mood's own). The first option is again
 # the phone's behaviour today (its own provisioned hours, its usual levels),
 # and the phone falls back to that for anything it cannot read.
 #
@@ -34,7 +49,8 @@
 # guest room opt-ins, volume cap 0.35, no music in Lights Out
 # or Away), and vacation mode is checked by mood_begin before any setting.
 #
-# Adding an option: add a line; keep "Usual (...)" first and unchanged. Do not
+# Adding an option: add a line; keep "Usual (...)" first and unchanged (and
+# "Custom (sliders below)" last on the mood settings). Do not
 # rename the option that is currently chosen and then reload input_select:
 # Home Assistant then reads the helper as "unknown" until someone picks again
 # (the moods treat that as Usual). A restart picks "Usual" again.
@@ -52,6 +68,7 @@ input_select:
       - "Dimmer (15%, 2200 K)"
       - "Candlelight (10%, 2000 K)"
       - "A little brighter (40%, 2700 K)"
+      - "Custom (sliders below)"
   moods_movie_night_look:
     name: "Movie Night: red lamp"
     icon: mdi:movie-open-outline
@@ -59,6 +76,7 @@ input_select:
       - "Usual (6%)"
       - "Darker (3%)"
       - "A little brighter (12%)"
+      - "Custom (sliders below)"
   moods_afterglow_look:
     name: "Afterglow: loft and patio"
     icon: mdi:string-lights
@@ -66,6 +84,7 @@ input_select:
       - "Usual (loft 45%, patio 55%)"
       - "Softer (loft 30%, patio 35%)"
       - "Brighter (loft 65%, patio 80%)"
+      - "Custom (sliders below)"
   moods_lights_out_bed:
     name: "Lights Out: the bed"
     icon: mdi:bed-outline
@@ -75,6 +94,7 @@ input_select:
       - "A little cooler (64 °F)"
       - "A little warmer (68 °F)"
       - "Warmer (70 °F)"
+      - "Custom (sliders below)"
   moods_good_morning_look:
     name: "Good Morning: how bright it gets"
     icon: mdi:weather-sunset-up
@@ -82,6 +102,7 @@ input_select:
       - "Usual (lamps up to 70%, loft 50%)"
       - "Gentler (lamps up to 50%, loft 35%)"
       - "Softest (lamps up to 35%, loft 25%)"
+      - "Custom (sliders below)"
   moods_focus_look:
     name: "Focus: office lights"
     icon: mdi:desk-lamp
@@ -89,6 +110,7 @@ input_select:
       - "Usual (100%, 5000 K)"
       - "Softer (75%, 4500 K)"
       - "Crisp daylight (100%, 6000 K)"
+      - "Custom (sliders below)"
   moods_hosting_look:
     name: "Hosting: patio and porch"
     icon: mdi:glass-wine
@@ -96,6 +118,7 @@ input_select:
       - "Usual (patio 60%, porch 70%)"
       - "Softer (patio 40%, porch 50%)"
       - "Brighter (patio 80%, porch 100%)"
+      - "Custom (sliders below)"
 
   # ---- The phones (one pair per panel name in tools/config.<panel>.json) --
   # Night hours: "HH:MM to HH:MM", or "No night hours" (no night by the clock;
@@ -143,16 +166,302 @@ input_select:
       - "Dimmest (50%)"
       - "Brighter (140%)"
 
+  # ---- Where each mood shows on the phones ---------------------------------
+  # Read by the phones (contract section 3), by exact text. The first option is
+  # today's behaviour (the mood's own mood_panels); a phone also falls back to
+  # it for anything it cannot read, and an older phone build ignores these.
+  # The six custom mood slots have the same pair, in moods_custom.yaml.
+  # Options are frozen in ui/dev/custom-options.lock.json (lint.js): the phones
+  # match them word for word, so never rename one.
+  moods_showcase_where:
+    name: "Showcase: where it shows"
+    icon: mdi:cellphone-cog
+    options:
+      - "Usual (as the mood says)"
+      - "First on every phone"
+      - "Only on the Bedroom Palm"
+      - "Only on the Living room Palm"
+      - "Not on the Bedroom Palm"
+      - "Not on the Living room Palm"
+      - "Hidden on every phone"
+  moods_wind_down_where:
+    name: "Wind Down: where it shows"
+    icon: mdi:cellphone-cog
+    options:
+      - "Usual (as the mood says)"
+      - "First on every phone"
+      - "Only on the Bedroom Palm"
+      - "Only on the Living room Palm"
+      - "Not on the Bedroom Palm"
+      - "Not on the Living room Palm"
+      - "Hidden on every phone"
+  moods_movie_night_where:
+    name: "Movie Night: where it shows"
+    icon: mdi:cellphone-cog
+    options:
+      - "Usual (as the mood says)"
+      - "First on every phone"
+      - "Only on the Bedroom Palm"
+      - "Only on the Living room Palm"
+      - "Not on the Bedroom Palm"
+      - "Not on the Living room Palm"
+      - "Hidden on every phone"
+  moods_afterglow_where:
+    name: "Afterglow: where it shows"
+    icon: mdi:cellphone-cog
+    options:
+      - "Usual (as the mood says)"
+      - "First on every phone"
+      - "Only on the Bedroom Palm"
+      - "Only on the Living room Palm"
+      - "Not on the Bedroom Palm"
+      - "Not on the Living room Palm"
+      - "Hidden on every phone"
+  moods_lights_out_where:
+    name: "Lights Out: where it shows"
+    icon: mdi:cellphone-cog
+    options:
+      - "Usual (as the mood says)"
+      - "First on every phone"
+      - "Only on the Bedroom Palm"
+      - "Only on the Living room Palm"
+      - "Not on the Bedroom Palm"
+      - "Not on the Living room Palm"
+      - "Hidden on every phone"
+  moods_good_morning_where:
+    name: "Good Morning: where it shows"
+    icon: mdi:cellphone-cog
+    options:
+      - "Usual (as the mood says)"
+      - "First on every phone"
+      - "Only on the Bedroom Palm"
+      - "Only on the Living room Palm"
+      - "Not on the Bedroom Palm"
+      - "Not on the Living room Palm"
+      - "Hidden on every phone"
+  moods_focus_where:
+    name: "Focus: where it shows"
+    icon: mdi:cellphone-cog
+    options:
+      - "Usual (as the mood says)"
+      - "First on every phone"
+      - "Only on the Bedroom Palm"
+      - "Only on the Living room Palm"
+      - "Not on the Bedroom Palm"
+      - "Not on the Living room Palm"
+      - "Hidden on every phone"
+  moods_hosting_where:
+    name: "Hosting: where it shows"
+    icon: mdi:cellphone-cog
+    options:
+      - "Usual (as the mood says)"
+      - "First on every phone"
+      - "Only on the Bedroom Palm"
+      - "Only on the Living room Palm"
+      - "Not on the Bedroom Palm"
+      - "Not on the Living room Palm"
+      - "Hidden on every phone"
+  moods_away_where:
+    name: "Away: where it shows"
+    icon: mdi:cellphone-cog
+    options:
+      - "Usual (as the mood says)"
+      - "First on every phone"
+      - "Only on the Bedroom Palm"
+      - "Only on the Living room Palm"
+      - "Not on the Bedroom Palm"
+      - "Not on the Living room Palm"
+      - "Hidden on every phone"
+
+input_number:
+  # Order in the deck, for every mood: 0 means the mood's own mood_order. Any
+  # whole number from 1 to 999 replaces it on the phones (the built-in moods use
+  # 10 to 90 and the custom slots 110 to 160). mode: box, so it is typed, not
+  # dragged. No initial:, so it keeps its value across restarts.
+  moods_showcase_order:
+    name: "Showcase: order in the deck (0 = usual)"
+    icon: mdi:sort-numeric-ascending
+    min: 0
+    max: 999
+    step: 1
+    mode: box
+  moods_wind_down_order:
+    name: "Wind Down: order in the deck (0 = usual)"
+    icon: mdi:sort-numeric-ascending
+    min: 0
+    max: 999
+    step: 1
+    mode: box
+  moods_movie_night_order:
+    name: "Movie Night: order in the deck (0 = usual)"
+    icon: mdi:sort-numeric-ascending
+    min: 0
+    max: 999
+    step: 1
+    mode: box
+  moods_afterglow_order:
+    name: "Afterglow: order in the deck (0 = usual)"
+    icon: mdi:sort-numeric-ascending
+    min: 0
+    max: 999
+    step: 1
+    mode: box
+  moods_lights_out_order:
+    name: "Lights Out: order in the deck (0 = usual)"
+    icon: mdi:sort-numeric-ascending
+    min: 0
+    max: 999
+    step: 1
+    mode: box
+  moods_good_morning_order:
+    name: "Good Morning: order in the deck (0 = usual)"
+    icon: mdi:sort-numeric-ascending
+    min: 0
+    max: 999
+    step: 1
+    mode: box
+  moods_focus_order:
+    name: "Focus: order in the deck (0 = usual)"
+    icon: mdi:sort-numeric-ascending
+    min: 0
+    max: 999
+    step: 1
+    mode: box
+  moods_hosting_order:
+    name: "Hosting: order in the deck (0 = usual)"
+    icon: mdi:sort-numeric-ascending
+    min: 0
+    max: 999
+    step: 1
+    mode: box
+  moods_away_order:
+    name: "Away: order in the deck (0 = usual)"
+    icon: mdi:sort-numeric-ascending
+    min: 0
+    max: 999
+    step: 1
+    mode: box
+
+  # ---- Custom (sliders below) ------------------------------------------------
+  # The sliders behind the last option of each mood setting above. A mood reads
+  # them only while its setting reads exactly "Custom (sliders below)", in the
+  # same all-or-nothing check as an option's numbers: input_number.moods_<slug>_<setting>_<i>
+  # is the i-th number (1 = the first), its min and max are exactly the range
+  # the mood checks (ui/dev/lint.js), and anything the mood cannot use (unknown,
+  # unavailable, nan, a decimal, out of range) gives ALL of the mood's usual
+  # values. No initial:, so each keeps its value across restarts. A new slider
+  # starts at its min; the seed automation (YAML id moods_sliders_seed_once,
+  # below) sets each to its Usual value the first time Home Assistant has them,
+  # and until then Custom gives Usual. Showcase and Away have nothing to adjust.
+  moods_wind_down_look_1:
+    name: "Wind Down: lamps brightness (custom)"
+    icon: mdi:candle
+    min: 10
+    max: 50
+    step: 1
+    unit_of_measurement: "%"
+    mode: slider
+  moods_wind_down_look_2:
+    name: "Wind Down: lamps colour (custom)"
+    icon: mdi:candle
+    min: 2000
+    max: 3000
+    step: 100
+    unit_of_measurement: "K"
+    mode: slider
+  moods_movie_night_look_1:
+    name: "Movie Night: red lamp brightness (custom)"
+    icon: mdi:movie-open-outline
+    min: 1
+    max: 20
+    step: 1
+    unit_of_measurement: "%"
+    mode: slider
+  moods_afterglow_look_1:
+    name: "Afterglow: loft brightness (custom)"
+    icon: mdi:string-lights
+    min: 10
+    max: 80
+    step: 1
+    unit_of_measurement: "%"
+    mode: slider
+  moods_afterglow_look_2:
+    name: "Afterglow: patio brightness (custom)"
+    icon: mdi:string-lights
+    min: 10
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    mode: slider
+  moods_lights_out_bed_1:
+    name: "Lights Out: the bed (custom)"
+    icon: mdi:bed-outline
+    min: 62
+    max: 70
+    step: 1
+    unit_of_measurement: "°F"
+    mode: slider
+  moods_good_morning_look_1:
+    name: "Good Morning: lamps up to (custom)"
+    icon: mdi:weather-sunset-up
+    min: 30
+    max: 70
+    step: 1
+    unit_of_measurement: "%"
+    mode: slider
+  moods_good_morning_look_2:
+    name: "Good Morning: loft brightness (custom)"
+    icon: mdi:weather-sunset-up
+    min: 10
+    max: 80
+    step: 1
+    unit_of_measurement: "%"
+    mode: slider
+  moods_focus_look_1:
+    name: "Focus: office brightness (custom)"
+    icon: mdi:desk-lamp
+    min: 50
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    mode: slider
+  moods_focus_look_2:
+    name: "Focus: office colour (custom)"
+    icon: mdi:desk-lamp
+    min: 4000
+    max: 6500
+    step: 100
+    unit_of_measurement: "K"
+    mode: slider
+  moods_hosting_look_1:
+    name: "Hosting: patio brightness (custom)"
+    icon: mdi:glass-wine
+    min: 20
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    mode: slider
+  moods_hosting_look_2:
+    name: "Hosting: porch brightness (custom)"
+    icon: mdi:glass-wine
+    min: 20
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    mode: slider
+
 script:
   # "Put every setting back to Usual" on the dashboard. Picks the first option
   # of every input_select.moods_* there is, so a setting added later is
-  # covered without editing this.
+  # covered without editing this, and sets every input_number.moods_*_order to
+  # 0. A custom mood's own content (custom_mood_*) is not a setting and stays.
   moods_settings_usual:
     alias: "Moods: every setting back to Usual"
     description: >-
-      Puts every Moods setting (each mood's look, the bed, and both phones)
-      back to its first option, which is how it behaved before the settings
-      screen existed. Nothing in the house changes until a mood is next set.
+      Puts every Moods setting (each mood's look, the bed, both phones, and
+      where each mood shows and in what order) back to its first option, which
+      is how it behaved before the settings screen existed. Custom moods keep
+      what they do. Nothing in the house changes until a mood is next set.
     icon: mdi:backup-restore
     mode: single
     sequence:
@@ -166,6 +475,274 @@ script:
       - action: input_select.select_first
         target:
           entity_id: "{{ ids }}"
+        continue_on_error: true
+      # Placement too: every input_number.moods_<slug>_order back to 0 (usual).
+      # Where each mood shows is an input_select.moods_* already reset above.
+      # The custom slots' own helpers (custom_mood_*) match neither pattern.
+      - variables:
+          orders: "{{ states.input_number | selectattr('entity_id', 'search', '^input_number[.]moods_.*_order$') | map(attribute='entity_id') | list }}"
+      - if:
+          - condition: template
+            value_template: "{{ orders | count > 0 }}"
+        then:
+          - action: input_number.set_value
+            target:
+              entity_id: "{{ orders }}"
+            data:
+              value: 0
+            continue_on_error: true
+      # And every Custom slider to its Usual value.
+      - action: script.moods_sliders_usual
+        continue_on_error: true
+
+  # Every Custom slider to its mood's Usual value (the first option's numbers;
+  # lint.js checks each value). Run once by the seed automation (YAML id
+  # moods_sliders_seed_once) and by "Put every setting back to Usual". Only the
+  # sliders change: a mood
+  # reads them only while its setting is "Custom (sliders below)".
+  moods_sliders_usual:
+    alias: "Moods: every Custom slider back to Usual"
+    description: >-
+      Sets each mood's Custom sliders to that mood's usual values. Nothing in
+      the house changes, and a mood whose setting is not "Custom (sliders
+      below)" does not read them.
+    icon: mdi:tune-vertical-variant
+    mode: single
+    sequence:
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.moods_wind_down_look_1
+        data:
+          value: 25
+        continue_on_error: true
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.moods_wind_down_look_2
+        data:
+          value: 2200
+        continue_on_error: true
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.moods_movie_night_look_1
+        data:
+          value: 6
+        continue_on_error: true
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.moods_afterglow_look_1
+        data:
+          value: 45
+        continue_on_error: true
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.moods_afterglow_look_2
+        data:
+          value: 55
+        continue_on_error: true
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.moods_lights_out_bed_1
+        data:
+          value: 66
+        continue_on_error: true
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.moods_good_morning_look_1
+        data:
+          value: 70
+        continue_on_error: true
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.moods_good_morning_look_2
+        data:
+          value: 50
+        continue_on_error: true
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.moods_focus_look_1
+        data:
+          value: 100
+        continue_on_error: true
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.moods_focus_look_2
+        data:
+          value: 5000
+        continue_on_error: true
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.moods_hosting_look_1
+        data:
+          value: 60
+        continue_on_error: true
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.moods_hosting_look_2
+        data:
+          value: 70
+        continue_on_error: true
+
+input_boolean:
+  # Turned on by the seed automation below once it has put every Custom slider
+  # at its Usual value. No initial:, so it is off only the very first time it
+  # exists and stays on across restarts. The moods read the sliders only while
+  # it is on (before that, Custom gives Usual). Turning it off seeds the sliders
+  # again at once.
+  moods_sliders_seeded:
+    name: "Moods: Custom sliders seeded"
+    icon: mdi:tune-vertical-variant
+
+automation:
+  # A new input_number starts at its min, not at the mood's Usual value. This
+  # puts every Custom slider at its Usual value once, as soon as all of them
+  # and script.moods_sliders_usual exist: at a start, or right after a reload of
+  # Automations (so a deploy by reloading needs no restart), and never again,
+  # so a restart keeps what was chosen. Turning the boolean off runs it again.
+  # Entity id (from the alias): automation.moods_put_the_custom_sliders_at_usual_once.
+  # The text below is checked by ui/dev/lint.js (comments aside).
+  - id: moods_sliders_seed_once
+    alias: "Moods: put the Custom sliders at Usual once"
+    description: >-
+      The first time Home Assistant has all the Custom sliders, sets each to its
+      mood's usual value. Never runs again unless
+      input_boolean.moods_sliders_seeded is turned off.
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: automation_reloaded
+      - trigger: state
+        entity_id: input_boolean.moods_sliders_seeded
+        to: "off"
+    conditions:
+      - condition: state
+        entity_id: input_boolean.moods_sliders_seeded
+        state: "off"
+      - condition: template
+        value_template: >-
+          {{ ['input_number.moods_wind_down_look_1', 'input_number.moods_wind_down_look_2', 'input_number.moods_movie_night_look_1', 'input_number.moods_afterglow_look_1', 'input_number.moods_afterglow_look_2', 'input_number.moods_lights_out_bed_1', 'input_number.moods_good_morning_look_1', 'input_number.moods_good_morning_look_2', 'input_number.moods_focus_look_1', 'input_number.moods_focus_look_2', 'input_number.moods_hosting_look_1', 'input_number.moods_hosting_look_2', 'script.moods_sliders_usual']
+             | select('has_value') | list | count == 13 }}
+    actions:
+      # No continue_on_error: if the sliders cannot be set, the boolean stays
+      # off and the next start or reload tries again.
+      - action: script.moods_sliders_usual
+      - action: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.moods_sliders_seeded
+      - action: homeassistant.save_persistent_states
+        continue_on_error: true
+
+  # input_number.set_value refuses anything outside min..max, but lets nan
+  # through. The moods read nan as unusable (ALL of the mood's usual values),
+  # but a restart would bring the slider back at its min, which they would
+  # then use. So when a slider reads nan, every slider of that setting goes
+  # straight back to its Usual value: the mood keeps giving exactly what it
+  # gave while the slider read nan, before and after a restart.
+  # Entity id: automation.moods_put_a_custom_slider_set_to_nan_back_at_usual.
+  - id: moods_sliders_nan_to_usual
+    alias: "Moods: put a Custom slider set to nan back at Usual"
+    description: >-
+      When a Custom slider is set to nan (which input_number.set_value
+      accepts), puts every slider of that setting back at its mood's usual
+      value at once, so a restart cannot turn it into the slider's minimum.
+    mode: queued
+    max: 25
+    triggers:
+      - trigger: state
+        entity_id:
+          - input_number.moods_wind_down_look_1
+          - input_number.moods_wind_down_look_2
+          - input_number.moods_movie_night_look_1
+          - input_number.moods_afterglow_look_1
+          - input_number.moods_afterglow_look_2
+          - input_number.moods_lights_out_bed_1
+          - input_number.moods_good_morning_look_1
+          - input_number.moods_good_morning_look_2
+          - input_number.moods_focus_look_1
+          - input_number.moods_focus_look_2
+          - input_number.moods_hosting_look_1
+          - input_number.moods_hosting_look_2
+        to: "nan"
+    actions:
+      - variables:
+          usual:
+            input_number.moods_wind_down_look_1: 25
+            input_number.moods_wind_down_look_2: 2200
+            input_number.moods_movie_night_look_1: 6
+            input_number.moods_afterglow_look_1: 45
+            input_number.moods_afterglow_look_2: 55
+            input_number.moods_lights_out_bed_1: 66
+            input_number.moods_good_morning_look_1: 70
+            input_number.moods_good_morning_look_2: 50
+            input_number.moods_focus_look_1: 100
+            input_number.moods_focus_look_2: 5000
+            input_number.moods_hosting_look_1: 60
+            input_number.moods_hosting_look_2: 70
+          setting:
+            input_number.moods_wind_down_look_1: [input_number.moods_wind_down_look_1, input_number.moods_wind_down_look_2]
+            input_number.moods_wind_down_look_2: [input_number.moods_wind_down_look_1, input_number.moods_wind_down_look_2]
+            input_number.moods_movie_night_look_1: [input_number.moods_movie_night_look_1]
+            input_number.moods_afterglow_look_1: [input_number.moods_afterglow_look_1, input_number.moods_afterglow_look_2]
+            input_number.moods_afterglow_look_2: [input_number.moods_afterglow_look_1, input_number.moods_afterglow_look_2]
+            input_number.moods_lights_out_bed_1: [input_number.moods_lights_out_bed_1]
+            input_number.moods_good_morning_look_1: [input_number.moods_good_morning_look_1, input_number.moods_good_morning_look_2]
+            input_number.moods_good_morning_look_2: [input_number.moods_good_morning_look_1, input_number.moods_good_morning_look_2]
+            input_number.moods_focus_look_1: [input_number.moods_focus_look_1, input_number.moods_focus_look_2]
+            input_number.moods_focus_look_2: [input_number.moods_focus_look_1, input_number.moods_focus_look_2]
+            input_number.moods_hosting_look_1: [input_number.moods_hosting_look_1, input_number.moods_hosting_look_2]
+            input_number.moods_hosting_look_2: [input_number.moods_hosting_look_1, input_number.moods_hosting_look_2]
+      - repeat:
+          for_each: "{{ setting[trigger.entity_id] }}"
+          sequence:
+            - action: input_number.set_value
+              target:
+                entity_id: "{{ repeat.item }}"
+              data:
+                value: "{{ usual[repeat.item] }}"
+              continue_on_error: true
+
+  # Home Assistant saves helper states every 15 minutes and at a clean stop.
+  # This saves the mood settings and their sliders 10 seconds after an edit,
+  # so a crash or power cut soon after a change does not undo it (as
+  # moods_custom_save_soon does for the custom moods and placement).
+  # Entity id: automation.moods_save_the_mood_settings_soon_after_an_edit.
+  - id: moods_settings_save_soon
+    alias: "Moods: save the mood settings soon after an edit"
+    description: >-
+      The mood settings and their Custom sliders are plain helper writes; this
+      makes them survive a crash within seconds instead of 15 minutes.
+    mode: restart
+    triggers:
+      - trigger: state
+        entity_id:
+          - input_select.moods_wind_down_look
+          - input_number.moods_wind_down_look_1
+          - input_number.moods_wind_down_look_2
+          - input_select.moods_movie_night_look
+          - input_number.moods_movie_night_look_1
+          - input_select.moods_afterglow_look
+          - input_number.moods_afterglow_look_1
+          - input_number.moods_afterglow_look_2
+          - input_select.moods_lights_out_bed
+          - input_number.moods_lights_out_bed_1
+          - input_select.moods_good_morning_look
+          - input_number.moods_good_morning_look_1
+          - input_number.moods_good_morning_look_2
+          - input_select.moods_focus_look
+          - input_number.moods_focus_look_1
+          - input_number.moods_focus_look_2
+          - input_select.moods_hosting_look
+          - input_number.moods_hosting_look_1
+          - input_number.moods_hosting_look_2
+    conditions:
+      - condition: template
+        value_template: "{{ trigger.from_state is not none and trigger.from_state.state not in ['unknown', 'unavailable'] }}"
+    actions:
+      - delay:
+          seconds: 10
+      - action: homeassistant.save_persistent_states
         continue_on_error: true
 
 lovelace:

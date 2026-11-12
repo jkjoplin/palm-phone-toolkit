@@ -184,7 +184,13 @@ function loadMoods(dir) {
   return moods;
 }
 
-module.exports = { readMoodFile, loadMoods, readHelpers, loadHelpers, scalar };
+/* any top-level section of a package file read as a block map ({} when absent), e.g. input_number */
+function readSection(text, name) {
+  const sec = section(text, name);
+  return sec ? (block(lex(sec), 0, 0).v || {}) : {};
+}
+
+module.exports = { readMoodFile, loadMoods, readHelpers, loadHelpers, readSection, scalar };
 
 if (require.main === module) {
   const args = process.argv.slice(2);

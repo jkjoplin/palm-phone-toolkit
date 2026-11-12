@@ -49,17 +49,21 @@ script:
         response_variable: begin
       - condition: template
         value_template: "{{ begin is mapping and begin.proceed | default(false) }}"
-      # Settings (moods_settings.yaml, the "Moods" dashboard): the whole
-      # numbers in the option chosen there, all checked together here. They
-      # are used only if every one is a plain whole number, there are exactly
-      # as many as expected and each is in range; otherwise ALL of today's
-      # values (missing, unknown, unavailable, signs, decimals, any other
-      # text). The helper id comes from this script's own name, so a copied
-      # mood file finds no setting and keeps its built-in values.
+      # Settings (moods_settings.yaml, the "Moods" dashboard): the whole numbers
+      # in the option chosen there, or with "Custom (sliders below)" chosen (and
+      # the sliders seeded) the states of this mood's sliders (a trailing .0
+      # dropped), all checked together here. They are used only if every one is
+      # a plain whole number, there are exactly as many as expected and each is
+      # in range; otherwise ALL of today's values (missing, unknown,
+      # unavailable, signs, decimals, any other text). The helper ids come from
+      # this script's own name, so a copied mood file finds no setting and keeps
+      # its built-in values.
       - variables:
           look: >-
-            {% set t = states('input_select.moods_' ~ this.entity_id | replace('script.mood_', '') ~ '_look')
-                    | regex_findall('-?[0-9]+(?:[.][0-9]+)?') %}
+            {% set o = states('input_select.moods_' ~ this.entity_id | replace('script.mood_', '') ~ '_look') %}
+            {% set p = 'input_number.moods_' ~ this.entity_id | replace('script.mood_', '') ~ '_look_' %}
+            {% if o == 'Custom (sliders below)' and is_state('input_boolean.moods_sliders_seeded', 'on') %}{% set t = [states(p ~ 1), states(p ~ 2)] | map('regex_replace', '[.]0$', '') | list %}
+            {% else %}{% set t = o | regex_findall('-?[0-9]+(?:[.][0-9]+)?') %}{% endif %}
             {{ t | map('int') | list if t | select('match', '^[0-9]+$') | list | count == t | count else [] }}
           ok: "{{ look | count == 2 and 10 <= look[0] <= 50 and 2000 <= look[1] <= 3000 }}"
           lamp_pct: "{{ look[0] if ok else 25 }}"

@@ -1,6 +1,8 @@
 /* Palm Moods: the Ember UI.
    Contract: docs/ARCHITECTURE.md, section 3. Nothing here names a mood: moods are Home Assistant
-   data (every script with mood: true). The only mood names in ui/ are mock.js's demo data.
+   data (every script with mood: true, and the custom mood slots made on the Moods dashboard, whose
+   cards are sensor.moods_custom_<n>), placed per phone by each mood's _where and _order helpers.
+   The only mood names in ui/ are mock.js's demo data.
    Classic script. Never logs the config or the token. */
 (function () {
 'use strict';
@@ -112,6 +114,10 @@ var PKEY = CFG.panel.replace(/[^a-z0-9_]+/g, '_').replace(/_+/g, '_').replace(/^
 var SET = { night: 'input_select.moods_panel_' + PKEY + '_night_hours', screen: 'input_select.moods_panel_' + PKEY + '_screen' };
 if (!PKEY || !Moods.ENTITY_RE.test(SET.night) || !Moods.ENTITY_RE.test(SET.screen)) SET = { night: '', screen: '' };
 if (SET.night) CORE.push(SET.night, SET.screen);
+/* Custom moods (sensor.moods_custom_<n>: state ready|not_ready|empty, attribute card) and placement
+   for every mood (input_select.moods_<slug>_where, input_number.moods_<slug>_order). */
+var GLOBS = ['sensor.moods_custom_*', 'input_select.moods_*_where', 'input_number.moods_*_order'];
+var CARD_RE = /^sensor\.moods_custom_[1-9]$/, PLACE_RE = /^input_(select|number)\.moods_[a-z0-9_]+_(where|order)$/;
 var sim = null;
 
 function startClient() {
@@ -123,14 +129,14 @@ function startClient() {
     var mq = Q.get('mood'), init = sorted[0], i;
     function slugOf(m) { return m.entity_id.replace(/^script\.mood_/, ''); }   // as the package does
     if (mq != null && /^\d+$/.test(mq) && sorted[+mq]) init = sorted[+mq];
-    else if (mq) for (i = 0; i < sorted.length; i++) if (slugOf(sorted[i]) === mq) init = sorted[i];
+    else if (mq) for (i = 0; i < set.length; i++) if (slugOf(set[i]) === mq) init = set[i];   // a custom mood slot too
     var initSlug = init ? slugOf(init) : '';
     // as in the mockup: the previous mood is the first one, or a night mood when the first is current
     var prevSlug = '';
     if (sorted[0] && sorted[0] !== init) prevSlug = slugOf(sorted[0]);
     else for (i = 0; i < sorted.length; i++) if (sorted[i] !== init && sorted[i].attributes.mood_night) { prevSlug = slugOf(sorted[i]); break; }
     if (!prevSlug && sorted[1]) prevSlug = slugOf(sorted[1]);
-    sim = new HouseSim({ moods: set, token: null, never: Q.has('never') ? Q.get('never') : MockHA.never, initial: initSlug, previous: prevSlug,
+    sim = new HouseSim({ moods: set, extras: MockHA.extras ? MockHA.extras(Q.get('mockset')) : [], token: null, never: Q.has('never') ? Q.get('never') : MockHA.never, initial: initSlug, previous: prevSlug,
                          tempEntity: CFG.tempEntity, temp: 68, speed: Q.get('speed') ? Number(Q.get('speed')) || 1 : 1,
                          clock: clockNow });   // ?time= also pins the mock house's clock, so its mood windows follow it
     socketFactory = function () { return new MockHA.MockSocket(sim); };
@@ -144,7 +150,9 @@ function startClient() {
     onError: function (e) { shellLog('error', 'event handler: ' + (e && e.message)); },
     onSubError: function (key, e) { shellLog('warn', 'subscription ' + key + ' failed: ' + (e && e.code)); }
   });
-  client.subscribe('core', { type: 'subscribe_entities', include: { domains: ['script'], entities: CORE } }, function (ev, fresh) {
+  // the custom moods' cards and every mood's placement come by glob (never entity_ids, which HA
+  // ANDs with include); a house without them simply sends none
+  client.subscribe('core', { type: 'subscribe_entities', include: { domains: ['script'], entities: CORE, entity_globs: GLOBS } }, function (ev, fresh) {
     var ch = store.apply('core', ev, fresh);
     if (fresh) { store.drop('cache'); }
     onEntities(ch, fresh);
@@ -180,11 +188,12 @@ function updateTouchSub() {
 }
 
 function onEntities(ids, fresh) {
-  var scripts = fresh, mood = false, temp = false, settings = false;
+  var scripts = fresh, mood = false, house = false, temp = false, settings = false;
   for (var i = 0; i < ids.length; i++) {
     var id = ids[i];
     if (id.charCodeAt(0) === 115 && id.indexOf('script.') === 0) scripts = true;   // 's'
-    else if (id === 'input_text.house_mood' || id === 'input_text.house_mood_previous') mood = true;
+    else if (CARD_RE.test(id) || PLACE_RE.test(id)) scripts = true;               // a custom mood's card, a mood's placement
+    else if (id === 'input_text.house_mood' || id === 'input_text.house_mood_previous') { mood = true; if (id === 'input_text.house_mood') house = true; }
     else if (id === 'input_text.house_mood_notice') onNotice();
     else if (id === CFG.tempEntity) temp = true;
     if (SET.night && (id === SET.night || id === SET.screen)) settings = true;
@@ -197,9 +206,12 @@ function onEntities(ids, fresh) {
     if (view === 'idle') renderStatus();
     return;
   }
+  // a mood hidden here that becomes current is shown (last), and one that stops being current goes:
+  // list it now, before the face looks for it (the signature is unchanged otherwise: nothing redrawn)
+  if (house && !fresh) refreshMoods('diff');
   // a later full dump (a reconnect) still lets a shrink settle: it may land mid script reload
   if (scripts) { if (fresh) refreshMoods('fresh'); else later('moods', function () { refreshMoods('diff'); }, 300); }
-  if (mood || fresh) onHouseMood(false);
+  if (mood || fresh) onHouseMood(false, fresh);
   if (temp && view === 'idle') renderStatus();
   if (settings) { note('settings', panelSettings()); computeNight(); }
   checkMarks();
@@ -208,10 +220,38 @@ function onEntities(ids, fresh) {
 /* ===================== moods ===================== */
 var moods = [], N = 0, moodSig = null, rebuildPending = false, shrinkSeen = 0, slugWarned = {};
 function moodIds() { var a = store.ids('core'); if (!a.length) a = store.ids('cache'); return a.filter(function (id) { return id.indexOf('script.') === 0; }); }
+/* A custom mood's card (sensor.moods_custom_<n>): used only while the sensor says ready. not_ready
+   and empty are news (the slot goes); a sensor that is missing, unknown or unavailable, or a ready one
+   whose card cannot be read, is no news: the last good card stays (from the live data or the cache). */
+var lastCards = {};
+function readCard(e) {
+  var c = e && e.a ? e.a.card : null;
+  if (typeof c === 'string') { try { c = JSON.parse(c); } catch (err) { c = null; } }
+  return c && typeof c === 'object' && !Array.isArray(c) ? c : null;
+}
+function cardOf(n) {
+  var e = store.get('sensor.moods_custom_' + n), s = e ? String(e.s) : '';
+  if (s === 'not_ready' || s === 'empty') { lastCards[n] = null; return null; }
+  if (s === 'ready') { var c = readCard(e); if (c) { lastCards[n] = c; return c; } }
+  return lastCards[n] || null;
+}
+function placeOf(slug) {
+  var w = store.get('input_select.moods_' + slug + '_where'), o = store.get('input_number.moods_' + slug + '_order');
+  return { where: w ? w.s : null, order: o ? o.s : null };
+}
+var hideWarned = false;
 /* kind: 'boot' (first data, the cache, or a deck that just closed: take the list as it is),
          'fresh' (a full dump after a reconnect), 'diff' (a change event) */
+/* the moods hiding never drops here: the house's mood, one this phone is setting or undoing to, and
+   the one an Undo on offer goes back to (still settable by that Undo, so it keeps its name and place) */
+function keepSlugs() {
+  var k = [haValue('input_text.house_mood'), pend ? pend.slug : '', undoPend ? undoPend.slug : ''];
+  if (undoUntil && undoUntil > now() && undoSlug) k.push(undoSlug);
+  return k.filter(function (s) { return !!s; });
+}
 function refreshMoods(kind) {
-  var list = Moods.fromStates(store.get, moodIds(), CFG.panel);
+  var list = Moods.fromStates(store.get, moodIds(), CFG.panel, { card: cardOf, place: placeOf, current: keepSlugs() });
+  if (list.hidingIgnored && !hideWarned) { hideWarned = true; shellLog('warn', 'placement would hide every mood on this panel; hiding ignored'); }
   var sig = Moods.signature(list);
   if (sig === moodSig) { shrinkSeen = 0; return; }
   // a script reload removes entities a moment before re-creating them: let a shrink settle first
@@ -220,7 +260,8 @@ function refreshMoods(kind) {
     if (now() - shrinkSeen < 2000) { later('moods', function () { refreshMoods('diff'); }, 2100 - (now() - shrinkSeen)); return; }
   }
   shrinkSeen = 0;
-  if (view === 'deck' && N > 0 && kind === 'diff') { rebuildPending = true; return; }   // never rebuild under a finger
+  // never rebuild under a finger: a change event, or a reconnect's full dump, waits for the deck to close
+  if (view === 'deck' && N > 0 && kind !== 'boot') { rebuildPending = true; return; }
   if (view === 'deck' && N > 0 && (hold || locked)) { rebuildPending = true; return; }
   rebuildPending = false;
   moodSig = sig; moods = list; N = list.length;
@@ -241,7 +282,8 @@ function cleanSlug(s) { s = String(s == null ? '' : s).trim().toLowerCase(); ret
 function haValue(id) { var e = store.get(id); return e ? cleanSlug(e.s) : ''; }
 
 /* ===================== cache: the last moods, so a reload draws at once ===================== */
-var CACHE_KEY = 'moods.cache.v1';
+/* v2: custom mood cards and placement too (a v1 cache is ignored, never half-read) */
+var CACHE_KEY = 'moods.cache.v2';
 function saveCache() {
   if (MODE === 'mock' || !dataReady) return;
   // never store a list that is still settling (a mood shown on the deck but gone from the store)
@@ -249,6 +291,17 @@ function saveCache() {
   try {
     var a = {};
     moods.forEach(function (m) { var e = store.get(m.id); if (e) a[m.id] = { s: e.s, a: e.a }; });
+    // every mood script and slot script (a mood hidden here today may show tomorrow), each custom
+    // mood's card (its last good one while the sensor is no news), and every placement helper's state
+    store.ids('core').forEach(function (id) {
+      var e = store.get(id);
+      if (!e || a[id]) return;
+      if (id.indexOf('script.') === 0) { if (e.a && (e.a.mood || e.a.mood_slot != null)) a[id] = { s: e.s, a: e.a }; }
+      else if (CARD_RE.test(id)) {
+        var n = +id.slice(-1), c = cardOf(n);
+        a[id] = c ? { s: 'ready', a: { card: c } } : { s: e.s, a: {} };
+      } else if (PLACE_RE.test(id)) a[id] = { s: e.s, a: {} };
+    });
     // helpers keep only their state; a climate tempEntity also keeps the one attribute shown
     CORE.forEach(function (id) {
       var e = store.get(id);
@@ -830,7 +883,8 @@ function apply(idx, opts) {
   checkMarks();
   later('mkTimeout', function () { marksTimeout(run); }, TIMING.confirmMs);
   // HA accepts a call it then does nothing with (a missing target, a mood file without its begin
-  // steps): if house_mood never reaches this mood, put the face back to what the house has
+  // steps): if house_mood never reaches this mood, put the face back to what the house has, once
+  // the store is known to be current (checkLanded)
   later('applySettle', function () { settleApply(run); }, TIMING.confirmMs + 500);
 
   note('call', 'script.turn_on ' + m.id);
@@ -849,8 +903,6 @@ function apply(idx, opts) {
     note('call-ok', m.id);
   }, function (err) {
     run.acked = true;
-    // the link went with the call: nothing heard from HA since, so the store is no answer
-    if (err && err.code === 'disconnected') run.lost = true;
     note('call-failed', (err && err.code) + ' ' + m.id);
     if (pend === run) applyFailed(run, err && err.code === 'disconnected' ? 'Lost Home Assistant. Try again.' : 'Home Assistant didn’t take it.');
   });
@@ -901,7 +953,17 @@ function checkMarks() {
 }
 function marksTimeout(run) {
   if (pend !== run || run.done) return;
-  if (!run.landed && haValue('input_text.house_mood') !== run.slug) { settleApply(run); return; }
+  if (!run.landed && haValue('input_text.house_mood') !== run.slug) {
+    checkLanded(run, function (ok) {
+      if (pend !== run || run.done) return;
+      if (ok === false && settleNow(run)) return;
+      missMarks(run);     // landed meanwhile, or the link went (the reconnect's full state decides)
+    });
+    return;
+  }
+  missMarks(run);
+}
+function missMarks(run) {
   var misses = [];
   run.items.forEach(function (it) {
     if (it.state === 'ok') return;
@@ -940,20 +1002,36 @@ function applyFailed(run, text) {
   if (!STATIC) later('ret', goIdle, 5000);
 }
 
+/* Has Home Assistant really not set run's mood? The store can be behind HA: Wi-Fi that holds inbound
+   packets delivers the call's answer and then the house_mood diffs seconds late, or the answer late
+   too. Its house_mood says nothing until HA has answered a ping sent now (client.sync(): one ordered
+   stream, so every diff sent before the pong has been applied). done(true) landed, done(false) not
+   set, done(null) the link went first (the reconnect's full state goes through onHouseMood). */
+function checkLanded(run, done) {
+  function landed() { return run.landed || haValue('input_text.house_mood') === run.slug; }
+  if (landed()) { done(true); return; }
+  if (run.waits) { run.waits.push(done); return; }
+  run.waits = [done];
+  note('apply-sync', run.slug);
+  function flush(v) { var w = run.waits; run.waits = null; w.forEach(function (f) { f(v); }); }
+  client.sync().then(function () { flush(landed()); }, function () { note('apply-unheard', run.slug); flush(null); });
+}
+
 /* the hold was accepted but house_mood never reached the mood */
 var lastRun = null;
 function settleApply(run) {
-  if (lastRun !== run || run.landed || run.failed) return;
-  // The call was never answered, or the link was lost with it: the store has heard nothing from HA
-  // since the call, so its house_mood says nothing about this mood. Putting the face back to it
-  // showed the old mood over a mood HA had set (inbound traffic late by 8.5 s). The reconnect's
-  // full state goes through onHouseMood, which shows whatever the house has.
-  if (!run.acked || run.lost) { note('apply-unheard', run.slug); return; }
+  if (lastRun !== run || run.landed || run.failed || shownSlug !== run.slug) return;
+  checkLanded(run, function (ok) { if (ok === false) settleNow(run); });
+}
+/* put the face back to the house's mood (the store is current: after checkLanded, or a refusal
+   notice, which HA sent after anything else it wrote); true if it did */
+function settleNow(run, text) {
+  if (lastRun !== run || run.landed || run.failed) return false;
   var s = haValue('input_text.house_mood');
-  if (s === run.slug || shownSlug !== run.slug) return;
+  if (s === run.slug || shownSlug !== run.slug) return false;
   note('apply-unconfirmed', run.slug + ' (house: ' + (s || '-') + ')');
-  var text = 'Home Assistant didn\u2019t set ' + run.name + '.';
-  if (pend === run) { applyFailed(run, text); return; }
+  text = text || 'Home Assistant didn\u2019t set ' + run.name + '.';
+  if (pend === run) { applyFailed(run, text); return true; }
   run.failed = true;
   haptic('error');
   hideUndo();
@@ -961,6 +1039,7 @@ function settleApply(run) {
   cards.forEach(function (k, i) { k.classList.toggle('is-now', i === cur); if (i === run.idx) k.classList.remove('applied', 'bloom-go'); });
   computeNight();
   if (view === 'idle') { arrive(); faceFlash(text); } else showCardNote(cards[run.idx], text);
+  return true;
 }
 
 var lastNotice = null;
@@ -974,22 +1053,35 @@ function onNotice() {
   var parts = s.split('|'), slug = cleanSlug(parts[0]), reason = parts.slice(2).join('|').trim() || 'Home Assistant refused it.';
   note('notice', slug + ': ' + reason);
   if (pend && pend.slug === slug && now() - pend.t0 < 15000) applyFailed(pend, reason);
-  else if (lastRun && !lastRun.failed && lastRun.slug === slug && shownSlug === slug && now() - lastRun.t0 < 15000) { lastRun.landed = false; settleApply(lastRun); faceFlash(reason); }
+  else if (lastRun && !lastRun.failed && lastRun.slug === slug && shownSlug === slug && now() - lastRun.t0 < 15000) { lastRun.landed = false; if (!settleNow(lastRun, reason)) faceFlash(reason); }
   else if (undoPend && undoPend.slug === slug && now() - undoPend.t0 < 15000) revertUndo(undoPend, reason);
 }
 
-/* house_mood is the truth, whoever changed it */
-function onHouseMood(boot) {
+/* house_mood is the truth, whoever changed it. boot: the first data; fresh: a full state (a reconnect) */
+var lastHouse = null;
+function onHouseMood(boot, fresh) {
   var e = store.get('input_text.house_mood');
   if (!e) return;
   var s = cleanSlug(e.s);
+  // Only a change of house_mood itself, or a full state, is news about the house. A diff of
+  // house_mood_previous alone (mood_begin writes it a moment before house_mood) is HA catching up
+  // with what we just set, however late it arrives: it is never an outside change back to the old mood.
+  var news = !!(boot || fresh) || s !== lastHouse;
+  lastHouse = s;
   if (lastRun && s === lastRun.slug) lastRun.landed = true;
   if (pend && s === pend.slug) { pend.landed = true; if (shownSlug !== s) { shownSlug = s; cur = idxOf(s); } saveCache(); return; }   // our own mood landing
   // HA has not caught up with what we just set (mood_begin writes previous first, then current)
   if (pend && !pend.landed && s === pend.prevSlug && now() - pend.t0 < 10000) return;
+  // an Undo whose call went with the link: the reconnect's full state is the answer
+  if (fresh && undoPend && undoPend.lost) {
+    if (s === undoPend.slug) { undoPend = null; clear('undoSettle'); if (shownSlug !== s) { shownSlug = s; cur = idxOf(s); renderFace(); } }
+    else revertUndo(undoPend, undoPend.lost);
+    return;
+  }
   if (undoPend && s === undoPend.from && now() - undoPend.t0 < 10000) return;
   if (undoPend && s === undoPend.slug) { undoPend = null; clear('undoSettle'); if (shownSlug !== s) { shownSlug = s; cur = idxOf(s); renderFace(); } return; }
   if (s === shownSlug) { if (cur !== idxOf(s)) { cur = idxOf(s); renderFace(); } return; }
+  if (!news) return;
   // an outside change: voice, the other phone, an automation (or the first value we hear)
   note('outside', (shownSlug || '-') + ' -> ' + (s || '-'));
   saveCache();
@@ -1034,7 +1126,11 @@ function showFaceUndo() {
   } else face.classList.remove('has-undo');
 }
 function hideUndo() {
+  var had = undoUntil;
   undoUntil = 0; clear('undo');
+  // a mood hidden here that was kept only for the Undo goes now (after this tick: the caller may
+  // be about to show it as the face, which keeps it too)
+  if (had && moods.hid) later('undoKeep', function () { refreshMoods('diff'); }, 0);
   face.classList.remove('has-undo');
   cards.forEach(function (c) { c.classList.remove('has-undo'); });
 }
@@ -1062,13 +1158,28 @@ function undo() {
   haptic('tick');
   note('call', 'script.turn_on script.mood_undo');
   var up = undoPend, acked = false;
-  later('undoAck', function () { if (!acked && undoPend === up) { note('call-timeout', 'script.mood_undo'); revertUndo(up, 'Home Assistant didn\u2019t answer.'); client.restart(); } }, TIMING.ackMs);
+  // No answer: the link is half-open (or inbound is held). Reconnect, and let the reconnect's full
+  // state say whether HA did the Undo (onHouseMood): the store has heard nothing since the call.
+  later('undoAck', function () { if (!acked && undoPend === up) { note('call-timeout', 'script.mood_undo'); up.lost = 'Home Assistant didn\u2019t answer.'; client.restart(); } }, TIMING.ackMs);
   // script.turn_on on mood_undo always succeeds, even when HA then does nothing (no previous
-  // mood, or mood_begin refused it): if house_mood has not come back by now, show what it has
-  later('undoSettle', function () { if (undoPend === up && haValue('input_text.house_mood') !== up.slug) revertUndo(up, 'Undo didn\u2019t go through.'); else if (undoPend === up) undoPend = null; }, TIMING.confirmMs);
+  // mood, or mood_begin refused it): if house_mood has not come back by now, and still has not once
+  // the store is known to be current (client.sync()), show what it has
+  later('undoSettle', function () {
+    if (undoPend !== up) return;
+    if (haValue('input_text.house_mood') === up.slug) { undoPend = null; return; }
+    if (up.lost) return;      // the reconnect's full state decides
+    note('undo-sync', up.slug);
+    client.sync().then(function () {
+      if (undoPend !== up) return;
+      if (haValue('input_text.house_mood') === up.slug) undoPend = null;
+      else revertUndo(up, 'Undo didn\u2019t go through.');
+    }, function () { if (undoPend === up && !up.lost) up.lost = 'Lost Home Assistant. Try again.'; });
+  }, TIMING.confirmMs);
   client.callService('script', 'turn_on', null, { entity_id: 'script.mood_undo' }).then(function () { acked = true; note('call-ok', 'script.mood_undo'); }, function (err) {
     acked = true;
     note('call-failed', (err && err.code) + ' script.mood_undo');
+    // sent, then the link went: HA may have done it, and the reconnect's full state will say
+    if (err && err.code === 'disconnected' && !err.unsent) { if (!up.lost) up.lost = 'Lost Home Assistant. Try again.'; return; }
     revertUndo(up, err && err.code === 'disconnected' ? 'Lost Home Assistant. Try again.' : 'Home Assistant didn\u2019t take it.');
   });
   computeNight();
@@ -1268,7 +1379,8 @@ window.__moodsBooted = true;
 window.__moods = {
   info: function () {
     return { mode: MODE, view: view, status: client ? client.status() : 'none', dataReady: dataReady, shown: shownSlug, ha: haValue('input_text.house_mood'),
-      previous: haValue('input_text.house_mood_previous'), moods: moods.map(function (m) { return m.slug; }), cur: cur, night: isNight, woken: woken,
+      previous: haValue('input_text.house_mood_previous'), moods: moods.map(function (m) { return m.slug; }), cur: cur,
+      hiddenHere: moods.filter(function (m) { return m.hiddenHere; }).map(function (m) { return m.slug; }), night: isNight, woken: woken,
       brightness: lastB, undo: undoUntil ? Math.max(0, undoUntil - now()) : 0, undoTo: undoSlug, offline: html.classList.contains('offline'),
       marks: pend ? pend.items.map(function (i) { return i.touch.label + ':' + i.state; }) : null,
       cardNote: (function () { for (var k = 0; k < cards.length; k++) if (cards[k].classList.contains('failnote')) return cards[k].querySelector('.note').textContent; return ''; })(),

@@ -30,7 +30,10 @@ const SHOTS = [
   ['night424', 'time=21:19&night=1&static=1', 2500, 424, 753],
   ['focus-many', 'time=15:40&state=deck&mood=5&mockset=many&static=1', 2500, 360, 640],
   ['broken-many', 'time=15:40&state=deck&mood=11&mockset=many&static=1', 2500, 360, 640],
-  ['bright-many', 'time=15:40&state=deck&mood=9&mockset=many&static=1', 2500, 360, 640]
+  ['bright-many', 'time=15:40&state=deck&mood=9&mockset=many&static=1', 2500, 360, 640],
+  // a custom mood made on the dashboard (slot 1 "Reading"), with placement (mockset=custom)
+  ['custom-deck', 'time=21:18&state=deck&mood=custom_1&mockset=custom&static=1', 2500, 360, 640],
+  ['custom-idle', 'time=21:18&mood=custom_1&mockset=custom&static=1', 2500, 360, 640]
 ];
 
 (async () => {
