@@ -13,7 +13,7 @@ The moods live in Home Assistant, not on the phone. Each one is a script plus a 
 
 The screenshots are 720x1280, the Palm's own resolution, rendered in headless Chrome against the fake Home Assistant in `ui/dev/`.
 
-Tested on a US PVG100 (Android 8.1, Chrome 101 WebView), firmware v1AGN and v3C3M, with Home Assistant 2026.11. You need the phone rooted first: see [backup and root](../docs/backup-and-root.md).
+Tested on a US PVG100 (Android 8.1, Chrome 101 WebView), firmware v1AGN and v3C3M, with Home Assistant 2026.11. You need the phone rooted first: see [backup and root](../../docs/backup-and-root.md).
 
 ## How it works
 
@@ -80,7 +80,7 @@ The token is a secret. It goes into a git-ignored config file on your computer, 
 ### 3. Build the app
 
 ```bash
-(cd moods/shell && ./gradlew testDebugUnitTest assembleDebug)
+(cd homeassistant/moods/shell && ./gradlew testDebugUnitTest assembleDebug)
 ```
 
 The APK is `shell/app/build/outputs/apk/debug/app-debug.apk`. The `copyUiAssets` task bundles `ui/` into it (without `ui/dev/`). See [shell/README.md](shell/README.md).
@@ -88,7 +88,7 @@ The APK is `shell/app/build/outputs/apk/debug/app-debug.apk`. The `copyUiAssets`
 ### 4. Provision a phone
 
 ```bash
-cd moods
+cd homeassistant/moods
 cp tools/config.example.json tools/config.bedroom.json
 chmod 600 tools/config.bedroom.json
 # edit it: haUrl (the LAN IP, e.g. http://192.168.1.10:8123) and token
@@ -97,7 +97,7 @@ tools/provision.sh <adb-serial> bedroom
 
 `<adb-serial>` comes from `adb devices`; `bedroom` is the panel name, which decides which moods the phone shows first and which phone settings it reads from the dashboard. Use the LAN IP, not `homeassistant.local`: Android 8.1 does not resolve `.local` names.
 
-The script checks everything before it changes anything, then installs the app, makes it the home app, turns off the swipe keyguard and the double-press camera gesture, resets any display density override, installs the toolkit's [charge limiter](../scripts/charge-limit/), and last pushes the config and starts Moods. It saves the phone's original values in `tools/state/<serial>.env`. Every change and the command that undoes it is listed in [tools/README.md](tools/README.md).
+The script checks everything before it changes anything, then installs the app, makes it the home app, turns off the swipe keyguard and the double-press camera gesture, resets any display density override, installs the toolkit's [charge limiter](../../scripts/charge-limit/), and last pushes the config and starts Moods. It saves the phone's original values in `tools/state/<serial>.env`. Every change and the command that undoes it is listed in [tools/README.md](tools/README.md).
 
 With no config at all the app runs in demo mode (five demo moods and a small "Demo" tag), which is a quick way to check the build on a phone.
 
@@ -128,7 +128,7 @@ The settings are plain `input_select` helpers whose first option is the built-in
 
 ## Checks
 
-From `moods/`:
+From `homeassistant/moods/`:
 
 ```bash
 node ui/dev/lint.js                       # Chrome 101 limits, palettes, card text, settings

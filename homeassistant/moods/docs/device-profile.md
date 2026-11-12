@@ -40,7 +40,7 @@ A phone that has been through Google setup can keep a `com.google.android.gms/..
 ### Charge guard findings
 - **The scripts differ.** A's copy lacks the PID single-instance guard. B's log showed 6 "started" lines in 2 minutes, from before that guard existed.
 - **A was at 26% even though the guard had enabled charging at 40% earlier.** Why it drained while charging was enabled is unknown.
-- **Logic trap:** if the battery is ≤40% and above COOL (38 °C), no branch turns charging back on. If the temperature stays above 38 °C after a heat pause, the phone drains until it shuts down. A 24/7 screen in a warm enclosure makes this plausible. (Fixed since in [scripts/charge-limit](../../scripts/charge-limit/): a heat-pause hysteresis and a `FLOOR` below which a warm phone charges anyway.)
+- **Logic trap:** if the battery is ≤40% and above COOL (38 °C), no branch turns charging back on. If the temperature stays above 38 °C after a heat pause, the phone drains until it shuts down. A 24/7 screen in a warm enclosure makes this plausible. (Fixed since in [scripts/charge-limit](../../../scripts/charge-limit/): a heat-pause hysteresis and a `FLOOR` below which a warm phone charges anyway.)
 - **Battery draw while paused (B, screen off, USB online):** bms `charge_counter` fell 31 µAh every 25 s, a steady **≈4.5 mA**, and OCV ≈ terminal voltage (3823/3822 mV). batterystats over a longer stretch suggests **~15 mA average while plugged and paused**.
 - **Screen-on draw while paused: NOT measured.** Evidence that USB carries most of the load: A, screen on, still pushes 610–710 mA *into* the battery from a 1.5 A port.
 - **Cycle arithmetic:**

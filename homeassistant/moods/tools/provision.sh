@@ -41,7 +41,7 @@ step() { printf '\n== %s\n' "$*"; }
 SERIAL=$1; PANEL=$2; shift 2
 APK="$REPO/shell/app/build/outputs/apk/debug/app-debug.apk"
 CONFIG="$TOOLS/config.$PANEL.json"
-GUARD="${CHARGE_GUARD:-$(dirname "$REPO")/scripts/charge-limit/charge_limit.sh}"
+GUARD="${CHARGE_GUARD:-$(dirname "$(dirname "$REPO")")/scripts/charge-limit/charge_limit.sh}"
 SKIP_GUARD=0
 while [ $# -gt 0 ]; do
   case $1 in

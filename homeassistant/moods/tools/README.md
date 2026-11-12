@@ -19,7 +19,7 @@ Options:
 | --- | --- |
 | `--apk FILE` | `shell/app/build/outputs/apk/debug/app-debug.apk` |
 | `--config FILE` | `tools/config.<panel>.json` |
-| `--charge-guard FILE` | `$CHARGE_GUARD`, else [`scripts/charge-limit/charge_limit.sh`](../../scripts/charge-limit/) in this toolkit |
+| `--charge-guard FILE` | `$CHARGE_GUARD`, else [`scripts/charge-limit/charge_limit.sh`](../../../scripts/charge-limit/) in this toolkit |
 | `--skip-charge-guard` | install the guard (this needs root) |
 
 You can build the APK on another machine and pass it with `--apk`. Debug builds are signed with that machine's `~/.android/debug.keystore`, so always build on the same machine, or copy its keystore. If the signature changes, `install -r` fails, and the only way out is to uninstall, which also deletes the stored token.
@@ -89,4 +89,4 @@ These came up in `docs/device-profile.md`. The contract does not ask for them, s
 
 ### Charge guard
 
-The guard is the toolkit's [charge limiter](../../scripts/charge-limit/). An older copy had a trap: with the battery at or below 40% and warmer than 38 °C, no branch turned charging back on, so a phone that stayed warm could drain until it shut down. The current version fixes this (heat-pause hysteresis and a `FLOOR`), and `provision.sh` installs whichever copy you point it at, so use the current one.
+The guard is the toolkit's [charge limiter](../../../scripts/charge-limit/). An older copy had a trap: with the battery at or below 40% and warmer than 38 °C, no branch turned charging back on, so a phone that stayed warm could drain until it shut down. The current version fixes this (heat-pause hysteresis and a `FLOOR`), and `provision.sh` installs whichever copy you point it at, so use the current one.
