@@ -1,0 +1,21 @@
+# Android build outputs
+build/
+.gradle/
+.kotlin/
+local.properties
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# Secrets: per-phone configs hold the Home Assistant token
+tools/config.*.json
+!tools/config.example.json
+config.json
+ha_token
+tools/state/
+
+# Test screenshots
+ui/dev/shots/
+
+.DS_Store

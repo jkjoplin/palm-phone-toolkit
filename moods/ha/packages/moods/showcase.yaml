@@ -1,0 +1,66 @@
+# Mood: Showcase. "The office lamp, a new colour every time." (Office)
+# An example of a small, self-contained mood, handy for filming or demoing a
+# panel: it touches only the office desk lamp, and each time it is set the lamp
+# moves to the next colour in the list below. Stateless: the next colour is
+# worked out from the colour the lamp shows now.
+# Names roles only; the lamp lives in moods_roles.yaml (light.role_office_lamp).
+# Delete this file (then reload core config and scripts) to remove the mood.
+
+homeassistant:
+  customize:
+    script.mood_showcase:
+      mood: true
+      mood_slug: showcase
+      mood_name: Showcase
+      mood_tagline: The office lamp, a new colour every time.
+      mood_order: 90
+      mood_scope: Office
+      mood_panels: [office]
+      mood_glyph: ember
+      mood_palette:
+        base: "#0d0b14"
+        glows: ["#e0527a", "#3fb7c9", "#f0a84a"]   # rose lamp, teal band, amber counter
+        accent: "#f6c1d6"
+      mood_status: Lamp glowing
+      mood_night: false
+      mood_holds_outdoor: false
+      mood_lights_outdoor: false
+      mood_touches:
+        - { label: Lamp, entity: light.role_office_lamp, expect: "on" }
+
+script:
+  mood_showcase:
+    alias: "Mood: Showcase"
+    icon: mdi:palette
+    mode: restart
+    sequence:
+      # Keep these two steps first in every mood.
+      - action: script.mood_begin
+        data:
+          slug: "{{ this.entity_id | replace('script.mood_', '') }}"
+        response_variable: begin
+      - condition: template
+        value_template: "{{ begin is mapping and begin.proceed | default(false) }}"
+      - variables:
+          hues: [12, 38, 175, 210, 270, 320]   # coral, amber, teal, azure, violet, magenta
+          next_hue: >-
+            {% set c = state_attr('light.role_office_lamp', 'hs_color') %}
+            {% if is_state('light.role_office_lamp', 'on') and c %}
+              {% set h = c[0] | float(0) %}
+              {% set ns = namespace(best=0, d=999) %}
+              {% for x in hues %}
+                {% set d = [(x - h) | abs, 360 - (x - h) | abs] | min %}
+                {% if d < ns.d %}{% set ns.best = loop.index0 %}{% set ns.d = d %}{% endif %}
+              {% endfor %}
+              {{ hues[(ns.best + 1) % (hues | length)] }}
+            {% else %}
+              {{ hues[0] }}
+            {% endif %}
+      - action: light.turn_on
+        target:
+          entity_id: light.role_office_lamp
+        data:
+          hs_color: ["{{ next_hue | int(12) }}", 85]
+          brightness_pct: 80
+          transition: 1
+        continue_on_error: true

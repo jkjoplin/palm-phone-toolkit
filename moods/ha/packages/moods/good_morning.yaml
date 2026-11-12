@@ -1,0 +1,165 @@
+# Mood: Good Morning. "Lamps rise to daylight. The loft wakes too." (House)
+# - Bedroom lamps rise in steps over about a minute and a half (the bedroom
+#   lamp cannot fade by itself), warm to daylight, never past 70%.
+# - Loft lamp to soft daylight.
+# - Kitchen radio, quiet, once moods_music.yaml has a media_id for it (volume
+#   set there, capped there). Silent today, so the card does not promise it.
+# - Bed off.
+# - Guest room: only the moods' own night light is turned off (if the night light
+#   is opted in and the lamp is still at night-light level); anything someone
+#   else set is left alone.
+# The rise stops by itself if someone turns the bedroom lamp off or dims it
+# during the rise (each step checks the lamp is still on and at least as
+# bright as the previous step left it). If another mood is chosen during the
+# rise, mood_begin stops this one.
+# Runs only between 05:00 and 11:00 local time (mood_window below): outside it
+# mood_begin refuses it, as vacation mode refuses a mood, and the phones say
+# why. Undo into Good Morning outside the window is refused the same way.
+# This script is mode: restart, so a tap after 11:00 on a rise that is still
+# running stops that rise where it is before mood_begin refuses the tap (see
+# ha/README.md, Refusals).
+# Names roles only; devices live in moods_roles.yaml, music in moods_music.yaml.
+
+homeassistant:
+  customize:
+    script.mood_good_morning:
+      mood: true
+      mood_slug: good_morning
+      mood_name: Good Morning
+      mood_tagline: Lamps rise to daylight. The loft wakes too.
+      mood_order: 50
+      mood_scope: House
+      mood_panels: [bedroom]
+      mood_glyph: sunrise
+      mood_palette:
+        base: "#160e09"
+        glows: ["#ea9840", "#546e96", "#f0be8c"]   # honey lamp, dawn-blue band, peach
+        accent: "#f6c27c"
+        ink: "#fcf0e2"
+        # the approved Ember sky: [kind, colour, alpha, width, height, x%, y%, drift]
+        sky:
+          - [band, "#546e96", 0.4, 640, 300, 50, 10, 2]
+          - [lamp, "#ea9840", 0.5, 660, 520, 50, 98, 1]
+          - [glow, "#f0be8c", 0.12, 320, 320, 6, 54, 3]
+      mood_status: Lamps rising
+      mood_night: false
+      mood_holds_outdoor: false
+      mood_lights_outdoor: false
+      # local time, from inclusive, to exclusive; quote both (unquoted 11:00 is a number)
+      mood_window: { from: "05:00", to: "11:00" }
+      mood_touches:
+        - { label: Lights, entity: light.role_bedroom_lamps, expect: "on" }
+        # Uncomment once good_morning has a media_id in moods_music.yaml:
+        # - { label: Radio, entity: media_player.role_kitchen_speaker, expect: "playing" }
+
+script:
+  mood_good_morning:
+    alias: "Mood: Good Morning"
+    icon: mdi:weather-sunset-up
+    mode: restart
+    sequence:
+      # Keep these two steps first in every mood. The slug comes from this
+      # script's own name (script.mood_<slug>), so a copied file cannot
+      # record itself under the wrong mood.
+      - action: script.mood_begin
+        data:
+          slug: "{{ this.entity_id | replace('script.mood_', '') }}"
+        response_variable: begin
+      - condition: template
+        value_template: "{{ begin is mapping and begin.proceed | default(false) }}"
+      # Settings (moods_settings.yaml, the "Moods" dashboard): the whole
+      # numbers in the option chosen there, all checked together here. They
+      # are used only if every one is a plain whole number, there are exactly
+      # as many as expected and each is in range; otherwise ALL of today's
+      # values (missing, unknown, unavailable, signs, decimals, any other
+      # text). The helper id comes from this script's own name, so a copied
+      # mood file finds no setting and keeps its built-in values.
+      - variables:
+          look: >-
+            {% set t = states('input_select.moods_' ~ this.entity_id | replace('script.mood_', '') ~ '_look')
+                    | regex_findall('-?[0-9]+(?:[.][0-9]+)?') %}
+            {{ t | map('int') | list if t | select('match', '^[0-9]+$') | list | count == t | count else [] }}
+          ok: "{{ look | count == 2 and 30 <= look[0] <= 70 and 10 <= look[1] <= 80 }}"
+          top_pct: "{{ look[0] if ok else 70 }}"
+          loft_pct: "{{ look[1] if ok else 50 }}"
+          # four steps, evenly spaced from 10% to the top (10, 30, 50, 70 as usual)
+          step2_pct: "{{ (10 + (top_pct - 10) / 3) | round(0) | int }}"
+          step3_pct: "{{ (10 + 2 * (top_pct - 10) / 3) | round(0) | int }}"
+      - parallel:
+          - sequence:
+              - variables:
+                  lamps: light.role_bedroom_lamps
+                  slack: 13   # brightness units (of 255), about 5%
+              - action: light.turn_on
+                target:
+                  entity_id: light.role_bedroom_lamps
+                data:
+                  color_temp_kelvin: 2700
+                  brightness_pct: 10
+                  transition: 30
+                continue_on_error: true
+              - delay:
+                  seconds: 30
+              # Stop if someone turned the lamp off or dimmed it below the
+              # 10% the last step set.
+              - condition: template
+                value_template: >-
+                  {{ is_state(lamps, 'on')
+                     and (state_attr(lamps, 'brightness') | int(0)) >= 10 * 2.55 - slack }}
+              - action: light.turn_on
+                target:
+                  entity_id: light.role_bedroom_lamps
+                data:
+                  color_temp_kelvin: 3500
+                  brightness_pct: "{{ step2_pct }}"
+                  transition: 30
+                continue_on_error: true
+              - delay:
+                  seconds: 30
+              # Stop if someone turned the lamp off or dimmed it below the
+              # level the last step set (30% as usual).
+              - condition: template
+                value_template: >-
+                  {{ is_state(lamps, 'on')
+                     and (state_attr(lamps, 'brightness') | int(0)) >= step2_pct * 2.55 - slack }}
+              - action: light.turn_on
+                target:
+                  entity_id: light.role_bedroom_lamps
+                data:
+                  color_temp_kelvin: 4500
+                  brightness_pct: "{{ step3_pct }}"
+                  transition: 30
+                continue_on_error: true
+              - delay:
+                  seconds: 30
+              # Stop if someone turned the lamp off or dimmed it below the
+              # level the last step set (50% as usual).
+              - condition: template
+                value_template: >-
+                  {{ is_state(lamps, 'on')
+                     and (state_attr(lamps, 'brightness') | int(0)) >= step3_pct * 2.55 - slack }}
+              - action: light.turn_on
+                target:
+                  entity_id: light.role_bedroom_lamps
+                data:
+                  color_temp_kelvin: 5000
+                  brightness_pct: "{{ top_pct }}"
+                  transition: 30
+                continue_on_error: true
+          - action: light.turn_on
+            target:
+              entity_id: light.role_loft_lamp
+            data:
+              color_temp_kelvin: 4000
+              brightness_pct: "{{ loft_pct }}"
+              transition: 30
+            continue_on_error: true
+          - action: script.role_music_play
+            data:
+              mood: "{{ this.entity_id | replace('script.mood_', '') }}"
+              speakers: media_player.role_kitchen_speaker
+            continue_on_error: true
+          - action: script.role_bed_off
+            continue_on_error: true
+          - action: script.role_guest_room_night_light_off
+            continue_on_error: true

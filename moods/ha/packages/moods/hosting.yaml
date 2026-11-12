@@ -1,0 +1,118 @@
+# Mood: Hosting. "Patio and porch glowing. Come on in." (House)
+# - Patio: Govee "Candlelight" scene where offered, else warm white.
+# - Porch: warm white. Asks to hold the outdoor lights (mood_holds_outdoor),
+#   which the 22:30 night-off can respect; see ha/README.md.
+# - Living room and kitchen roles are lit warm too. Both are empty today
+#   (living room bulbs disabled, no kitchen lights), so those steps do nothing
+#   until the roles are filled in moods_roles.yaml.
+# - Music on the house speakers if moods_music.yaml has a media_id for hosting
+#   (silent today, so the card does not promise it).
+# Names roles only; devices live in moods_roles.yaml.
+
+homeassistant:
+  customize:
+    script.mood_hosting:
+      mood: true
+      mood_slug: hosting
+      mood_name: Hosting
+      mood_tagline: Patio and porch glowing. Come on in.
+      mood_order: 70
+      mood_scope: House
+      mood_panels: [kitchen, living_room]
+      mood_glyph: glasses
+      mood_palette:
+        base: "#140d07"
+        glows: ["#c08a3e", "#7a2b2b", "#e0a458"]   # brass, wine, candle
+        accent: "#f0b866"
+      mood_status: Patio lit
+      mood_night: false
+      mood_holds_outdoor: true
+      mood_lights_outdoor: true
+      mood_touches:
+        - { label: Patio, entity: light.role_patio_lights, expect: "on" }
+        - { label: Porch, entity: light.role_porch_lights, expect: "on" }
+        # Uncomment once hosting has a media_id in moods_music.yaml:
+        # - { label: Music, entity: media_player.role_house_speakers, expect: "playing" }
+
+script:
+  mood_hosting:
+    alias: "Mood: Hosting"
+    icon: mdi:glass-wine
+    mode: restart
+    sequence:
+      # Keep these two steps first in every mood. The slug comes from this
+      # script's own name (script.mood_<slug>), so a copied file cannot
+      # record itself under the wrong mood.
+      - action: script.mood_begin
+        data:
+          slug: "{{ this.entity_id | replace('script.mood_', '') }}"
+        response_variable: begin
+      - condition: template
+        value_template: "{{ begin is mapping and begin.proceed | default(false) }}"
+      # Settings (moods_settings.yaml, the "Moods" dashboard): the whole
+      # numbers in the option chosen there, all checked together here. They
+      # are used only if every one is a plain whole number, there are exactly
+      # as many as expected and each is in range; otherwise ALL of today's
+      # values (missing, unknown, unavailable, signs, decimals, any other
+      # text). The helper id comes from this script's own name, so a copied
+      # mood file finds no setting and keeps its built-in values.
+      - variables:
+          look: >-
+            {% set t = states('input_select.moods_' ~ this.entity_id | replace('script.mood_', '') ~ '_look')
+                    | regex_findall('-?[0-9]+(?:[.][0-9]+)?') %}
+            {{ t | map('int') | list if t | select('match', '^[0-9]+$') | list | count == t | count else [] }}
+          ok: "{{ look | count == 2 and 20 <= look[0] <= 100 and 20 <= look[1] <= 100 }}"
+          patio_pct: "{{ look[0] if ok else 60 }}"
+          porch_pct: "{{ look[1] if ok else 70 }}"
+      - parallel:
+          - sequence:
+              - variables:
+                  patio_scene: Candlelight
+              - if:
+                  - condition: template
+                    value_template: >-
+                      {{ patio_scene in (state_attr('light.role_patio_lights', 'effect_list') or []) }}
+                then:
+                  - action: light.turn_on
+                    target:
+                      entity_id: light.role_patio_lights
+                    data:
+                      effect: "{{ patio_scene }}"
+                      brightness_pct: "{{ patio_pct }}"
+                    continue_on_error: true
+                else:
+                  - action: light.turn_on
+                    target:
+                      entity_id: light.role_patio_lights
+                    data:
+                      color_temp_kelvin: 2700
+                      brightness_pct: "{{ patio_pct }}"
+                    continue_on_error: true
+          - action: light.turn_on
+            target:
+              entity_id: light.role_porch_lights
+            data:
+              color_temp_kelvin: 2700
+              brightness_pct: "{{ porch_pct }}"
+            continue_on_error: true
+          - action: light.turn_on
+            target:
+              entity_id: light.role_living_room_lights
+            data:
+              color_temp_kelvin: 2700
+              brightness_pct: 60
+              transition: 5
+            continue_on_error: true
+          - action: light.turn_on
+            target:
+              entity_id: light.role_kitchen_lights
+            data:
+              color_temp_kelvin: 3000
+              brightness_pct: 80
+              transition: 5
+            continue_on_error: true
+          - action: script.role_music_play
+            data:
+              mood: "{{ this.entity_id | replace('script.mood_', '') }}"
+              speakers: media_player.role_house_speakers
+            continue_on_error: true

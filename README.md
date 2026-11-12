@@ -16,6 +16,13 @@ Palm (the company) is gone, and the phone is stuck on Android 8.1 and a 2019 sec
 | [docs/ideas.md](docs/ideas.md) | Ways to use the phone with Home Assistant, 3D printers and more, with a difficulty for each |
 | [patches/edl-firehose-pepito.patch](patches/edl-firehose-pepito.patch) | A small patch to [bkerler/edl](https://github.com/bkerler/edl) that makes reads and writes work reliably with the Palm's firehose loader |
 | [scripts/charge-limit/](scripts/charge-limit/) | A Magisk boot script that holds the battery between 40% and 80% and pauses charging when it's hot, so an always-plugged-in Palm doesn't swell |
+| [moods/](moods/) | Palm Moods: a Home Assistant mood controller for a wall or nightstand (Android home app, web UI and HA package) |
+
+## Palm Moods
+
+[moods/](moods/) turns a rooted PVG100 into a mood controller for Home Assistant. The phone shows a clock; tap it, swipe through moods like Wind Down, Movie Night or Lights Out, and press and hold to set one. The moods are Home Assistant scripts in one package, so voice, automations and every phone share them, and a mood names rooms ("roles") rather than devices. It comes with a Kotlin home app, a web UI built for the Palm's Chrome 101 WebView, the Home Assistant package with eight example moods and a settings dashboard, and a provisioning script.
+
+<p><img src="moods/docs/img/deck-movie-night.jpg" alt="The Movie Night card on a Palm" width="240"> <img src="moods/docs/img/idle-face.jpg" alt="The idle clock face" width="240"></p>
 
 ## Device facts (US PVG100)
 

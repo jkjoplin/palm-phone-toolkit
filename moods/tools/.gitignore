@@ -1,0 +1,5 @@
+# Real configs hold a Home Assistant token.
+config.*.json
+!config.example.json
+# Per-phone "before" values written by provision.sh.
+state/

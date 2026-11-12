@@ -1,0 +1,122 @@
+# Mood: Afterglow. "Loft and patio washed in colour. Stay a while." (House)
+# Uses a slow Govee scene where the light offers one (checked live against the
+# role's effect list, so a swapped device falls back to a plain colour).
+# Music: the role_music_play step stays, silent until moods_music.yaml has a
+# media_id for afterglow; the card does not promise music. No time window.
+# Names roles only; devices live in moods_roles.yaml, music in moods_music.yaml.
+
+homeassistant:
+  customize:
+    script.mood_afterglow:
+      mood: true
+      mood_slug: afterglow
+      mood_name: Afterglow
+      mood_tagline: Loft and patio washed in colour. Stay a while.
+      mood_order: 30
+      mood_scope: House
+      mood_panels: [bedroom]
+      mood_glyph: bulbs
+      mood_palette:
+        base: "#110716"
+        glows: ["#ba387a", "#5c32a4", "#e67042"]   # magenta lamp, violet band, coral
+        accent: "#f4917c"
+        ink: "#f8e4ec"
+        # the approved Ember sky: [kind, colour, alpha, width, height, x%, y%, drift]
+        sky:
+          - [band, "#5c32a4", 0.46, 640, 320, 50, 20, 2]
+          - [lamp, "#ba387a", 0.54, 620, 500, 50, 99, 1]
+          - [glow, "#e67042", 0.26, 300, 300, 96, 72, 3]
+      mood_status: Loft lights on
+      mood_night: false
+      mood_holds_outdoor: false
+      mood_lights_outdoor: true
+      mood_touches:
+        - { label: Loft, entity: light.role_loft_lamp, expect: "on" }
+        - { label: Patio, entity: light.role_patio_lights, expect: "on" }
+        # Uncomment once afterglow has a media_id in moods_music.yaml:
+        # - { label: Music, entity: media_player.role_house_speakers, expect: "playing" }
+
+script:
+  mood_afterglow:
+    alias: "Mood: Afterglow"
+    icon: mdi:string-lights
+    mode: restart
+    sequence:
+      # Keep these two steps first in every mood. The slug comes from this
+      # script's own name (script.mood_<slug>), so a copied file cannot
+      # record itself under the wrong mood.
+      - action: script.mood_begin
+        data:
+          slug: "{{ this.entity_id | replace('script.mood_', '') }}"
+        response_variable: begin
+      - condition: template
+        value_template: "{{ begin is mapping and begin.proceed | default(false) }}"
+      # Settings (moods_settings.yaml, the "Moods" dashboard): the whole
+      # numbers in the option chosen there, all checked together here. They
+      # are used only if every one is a plain whole number, there are exactly
+      # as many as expected and each is in range; otherwise ALL of today's
+      # values (missing, unknown, unavailable, signs, decimals, any other
+      # text). The helper id comes from this script's own name, so a copied
+      # mood file finds no setting and keeps its built-in values.
+      - variables:
+          look: >-
+            {% set t = states('input_select.moods_' ~ this.entity_id | replace('script.mood_', '') ~ '_look')
+                    | regex_findall('-?[0-9]+(?:[.][0-9]+)?') %}
+            {{ t | map('int') | list if t | select('match', '^[0-9]+$') | list | count == t | count else [] }}
+          ok: "{{ look | count == 2 and 10 <= look[0] <= 80 and 10 <= look[1] <= 100 }}"
+          loft_pct: "{{ look[0] if ok else 45 }}"
+          patio_pct: "{{ look[1] if ok else 55 }}"
+      - parallel:
+          - sequence:
+              - variables:
+                  loft_scene: Sunset Glow
+              - if:
+                  - condition: template
+                    value_template: >-
+                      {{ loft_scene in (state_attr('light.role_loft_lamp', 'effect_list') or []) }}
+                then:
+                  - action: light.turn_on
+                    target:
+                      entity_id: light.role_loft_lamp
+                    data:
+                      effect: "{{ loft_scene }}"
+                      brightness_pct: "{{ loft_pct }}"
+                    continue_on_error: true
+                else:
+                  - action: light.turn_on
+                    target:
+                      entity_id: light.role_loft_lamp
+                    data:
+                      rgb_color: [200, 40, 120]
+                      brightness_pct: "{{ loft_pct }}"
+                      transition: 5
+                    continue_on_error: true
+          - sequence:
+              - variables:
+                  patio_scene: Sunset Glow
+              - if:
+                  - condition: template
+                    value_template: >-
+                      {{ patio_scene in (state_attr('light.role_patio_lights', 'effect_list') or []) }}
+                then:
+                  - action: light.turn_on
+                    target:
+                      entity_id: light.role_patio_lights
+                    data:
+                      effect: "{{ patio_scene }}"
+                      brightness_pct: "{{ patio_pct }}"
+                    continue_on_error: true
+                else:
+                  - action: light.turn_on
+                    target:
+                      entity_id: light.role_patio_lights
+                    data:
+                      rgb_color: [230, 112, 66]
+                      brightness_pct: "{{ patio_pct }}"
+                      transition: 5
+                    continue_on_error: true
+          - action: script.role_music_play
+            data:
+              mood: "{{ this.entity_id | replace('script.mood_', '') }}"
+              speakers: media_player.role_house_speakers
+            continue_on_error: true

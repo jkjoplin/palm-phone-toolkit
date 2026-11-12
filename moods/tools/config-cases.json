@@ -1,0 +1,47 @@
+{
+  "_about": "Shared config.json cases. Each case's config is merged over base. Read by tools/test_check_config.py (the provision.sh check) and by the shell's ShellConfigTest (ShellConfig.parse), so both accept and reject the same files. haUrl, when given, is the normalized WebSocket URL the app will use.",
+  "base": {
+    "haUrl": "ws://192.168.1.10:8123/api/websocket",
+    "token": "test-token-not-a-real-one-0123456789",
+    "panel": "bedroom"
+  },
+  "cases": [
+    { "name": "base", "config": {}, "ok": true, "haUrl": "ws://192.168.1.10:8123/api/websocket" },
+    { "name": "http root", "config": { "haUrl": "http://192.168.1.10:8123" }, "ok": true, "haUrl": "ws://192.168.1.10:8123/api/websocket" },
+    { "name": "http trailing slash and spaces", "config": { "haUrl": " http://192.168.1.10:8123/ " }, "ok": true, "haUrl": "ws://192.168.1.10:8123/api/websocket" },
+    { "name": "http path pasted from a browser", "config": { "haUrl": "http://192.168.1.10:8123/lovelace/0" }, "ok": true, "haUrl": "ws://192.168.1.10:8123/api/websocket" },
+    { "name": "http query dropped", "config": { "haUrl": "http://192.168.1.10:8123/?edit=1" }, "ok": true, "haUrl": "ws://192.168.1.10:8123/api/websocket" },
+    { "name": "https to wss", "config": { "haUrl": "https://ha.example.ts.net" }, "ok": true, "haUrl": "wss://ha.example.ts.net/api/websocket" },
+    { "name": "upper-case scheme", "config": { "haUrl": "WS://192.168.1.10:8123/api/websocket" }, "ok": true, "haUrl": "ws://192.168.1.10:8123/api/websocket" },
+    { "name": "ws root", "config": { "haUrl": "ws://192.168.1.10:8123/" }, "ok": true, "haUrl": "ws://192.168.1.10:8123/api/websocket" },
+    { "name": "sub-path proxy", "config": { "haUrl": "wss://proxy.example.com/ha/api/websocket" }, "ok": true, "haUrl": "wss://proxy.example.com/ha/api/websocket" },
+    { "name": "ipv6", "config": { "haUrl": "ws://[fd00::1]:8123/api/websocket" }, "ok": true, "haUrl": "ws://[fd00::1]:8123/api/websocket" },
+    { "name": "night times", "config": { "nightStart": "7:30", "nightEnd": "06:00" }, "ok": true },
+    { "name": "null means absent", "config": { "nightStart": null, "nightEnd": null, "deviceName": null, "mock": null }, "ok": true },
+    { "name": "blank means absent", "config": { "deviceName": "  ", "nightStart": "" }, "ok": true },
+    { "name": "mock true", "config": { "mock": true }, "ok": true },
+    { "name": "mock false", "config": { "mock": false }, "ok": true },
+    { "name": "extras pass through", "config": { "dimFloor": 0.02, "future": { "x": [1, 2] }, "appVersion": 3 }, "ok": true },
+
+    { "name": "mock as a string", "config": { "mock": "false" }, "ok": false },
+    { "name": "deviceName not a string", "config": { "deviceName": 5 }, "ok": false },
+    { "name": "panel not a string", "config": { "panel": 5 }, "ok": false },
+    { "name": "token not a string", "config": { "token": 42 }, "ok": false },
+    { "name": "haUrl not a string", "config": { "haUrl": 8123 }, "ok": false },
+    { "name": "nightStart as a number", "config": { "nightStart": 2200 }, "ok": false },
+    { "name": "nightStart 24:00", "config": { "nightStart": "24:00" }, "ok": false },
+    { "name": "nightEnd words", "config": { "nightEnd": "7pm" }, "ok": false },
+    { "name": "non-numeric port", "config": { "haUrl": "ws://192.168.1.10:abc/" }, "ok": false },
+    { "name": "port out of range", "config": { "haUrl": "ws://192.168.1.10:99999/api/websocket" }, "ok": false },
+    { "name": "port zero", "config": { "haUrl": "ws://192.168.1.10:0/api/websocket" }, "ok": false },
+    { "name": "underscore in host", "config": { "haUrl": "ws://home_assistant:8123/api/websocket" }, "ok": false },
+    { "name": "last label starts with a digit", "config": { "haUrl": "ws://ha.123:8123/api/websocket" }, "ok": false },
+    { "name": "octet above 255", "config": { "haUrl": "ws://192.168.1.300:8123/api/websocket" }, "ok": false },
+    { "name": "space inside", "config": { "haUrl": "http://192.168.1.10 :8123" }, "ok": false },
+    { "name": "user info", "config": { "haUrl": "ws://user:pw@192.168.1.10:8123/api/websocket" }, "ok": false },
+    { "name": "fragment", "config": { "haUrl": "ws://192.168.1.10:8123/api/websocket#x" }, "ok": false },
+    { "name": "ws with another path", "config": { "haUrl": "ws://192.168.1.10:8123/lovelace/0" }, "ok": false },
+    { "name": "no scheme", "config": { "haUrl": "192.168.1.10:8123" }, "ok": false },
+    { "name": "other scheme", "config": { "haUrl": "ftp://192.168.1.10" }, "ok": false }
+  ]
+}

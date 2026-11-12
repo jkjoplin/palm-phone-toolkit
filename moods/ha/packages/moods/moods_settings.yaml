@@ -1,0 +1,188 @@
+# Palm Moods: the settings on the "Moods" dashboard (dashboards/palm_moods.yaml).
+#
+# Every setting is an input_select whose FIRST option is today's behaviour
+# ("Usual (...)"). Home Assistant gives a YAML input_select with no `initial:`
+# its first option the first time it exists, restores the last choice after a
+# restart, and falls back to the first option again when the restored choice
+# is no longer in the list. So a setting needs no seeding: until someone picks
+# something else, every mood does exactly what it did before this file existed.
+#
+# The numbers in an option's text ARE the values. Each mood reads its own
+# setting in one `variables:` step (after begin.proceed), takes the numbers out
+# of the text and checks them all at once: every one a plain whole number (no
+# sign, no decimal), exactly the expected count, each inside its range. Only
+# then are the chosen values used, all of them; anything else (missing,
+# unknown, unavailable, the wrong count, one number out of range, a sign or a
+# decimal, any other text) gives ALL of today's values, never a mix. The
+# template cannot raise an error (a TemplateError would
+# stop the mood even with continue_on_error), so a bad setting can never break
+# a mood or make it do anything outside its range. ui/dev/lint.js checks that
+# the first option of each setting is exactly the mood's fallback and that
+# every option is inside the mood's range.
+#
+# The helper ids are built from the mood's own slug: input_select.moods_<slug>_look
+# (and _bed for Lights Out). A copied mood file therefore finds no setting and
+# runs on its own built-in values until it is given one here.
+#
+# The phones read their own two settings (input_select.moods_panel_<panel>_*):
+# night hours and the day brightness of the screen. The first option is again
+# the phone's behaviour today (its own provisioned hours, its usual levels),
+# and the phone falls back to that for anything it cannot read.
+#
+# Safety does not depend on any of this. The wrappers in
+# moods_roles.yaml and moods_music.yaml keep their own limits (bed 60 to 75 F,
+# guest room opt-ins, volume cap 0.35, no music in Lights Out
+# or Away), and vacation mode is checked by mood_begin before any setting.
+#
+# Adding an option: add a line; keep "Usual (...)" first and unchanged. Do not
+# rename the option that is currently chosen and then reload input_select:
+# Home Assistant then reads the helper as "unknown" until someone picks again
+# (the moods treat that as Usual). A restart picks "Usual" again.
+#
+# No YAML tags in this file (ui/dev/mood-yaml.js reads it), and quote every
+# option: an unquoted 22:00 is a number in YAML 1.1.
+
+input_select:
+  # ---- Moods -------------------------------------------------------------
+  moods_wind_down_look:
+    name: "Wind Down: lamps"
+    icon: mdi:candle
+    options:
+      - "Usual (25%, 2200 K)"
+      - "Dimmer (15%, 2200 K)"
+      - "Candlelight (10%, 2000 K)"
+      - "A little brighter (40%, 2700 K)"
+  moods_movie_night_look:
+    name: "Movie Night: red lamp"
+    icon: mdi:movie-open-outline
+    options:
+      - "Usual (6%)"
+      - "Darker (3%)"
+      - "A little brighter (12%)"
+  moods_afterglow_look:
+    name: "Afterglow: loft and patio"
+    icon: mdi:string-lights
+    options:
+      - "Usual (loft 45%, patio 55%)"
+      - "Softer (loft 30%, patio 35%)"
+      - "Brighter (loft 65%, patio 80%)"
+  moods_lights_out_bed:
+    name: "Lights Out: the bed"
+    icon: mdi:bed-outline
+    options:
+      - "Usual (66 °F)"
+      - "Cooler (62 °F)"
+      - "A little cooler (64 °F)"
+      - "A little warmer (68 °F)"
+      - "Warmer (70 °F)"
+  moods_good_morning_look:
+    name: "Good Morning: how bright it gets"
+    icon: mdi:weather-sunset-up
+    options:
+      - "Usual (lamps up to 70%, loft 50%)"
+      - "Gentler (lamps up to 50%, loft 35%)"
+      - "Softest (lamps up to 35%, loft 25%)"
+  moods_focus_look:
+    name: "Focus: office lights"
+    icon: mdi:desk-lamp
+    options:
+      - "Usual (100%, 5000 K)"
+      - "Softer (75%, 4500 K)"
+      - "Crisp daylight (100%, 6000 K)"
+  moods_hosting_look:
+    name: "Hosting: patio and porch"
+    icon: mdi:glass-wine
+    options:
+      - "Usual (patio 60%, porch 70%)"
+      - "Softer (patio 40%, porch 50%)"
+      - "Brighter (patio 80%, porch 100%)"
+
+  # ---- The phones (one pair per panel name in tools/config.<panel>.json) --
+  # Night hours: "HH:MM to HH:MM", or "No night hours" (no night by the clock;
+  # a dark room, or the Lights Out face while the room is not lit, still
+  # brings night, as with any hours). The first option keeps the hours the
+  # phone was provisioned with.
+  moods_panel_bedroom_night_hours:
+    name: "Bedroom Palm: night hours"
+    icon: mdi:weather-night
+    options:
+      - "This phone's own hours"
+      - "21:00 to 06:00"
+      - "21:30 to 06:30"
+      - "22:00 to 07:00"
+      - "22:30 to 07:00"
+      - "23:00 to 07:30"
+      - "No night hours"
+  # Day brightness of the screen, as a share of the usual levels (night
+  # stays as dark as the panel goes).
+  moods_panel_bedroom_screen:
+    name: "Bedroom Palm: screen by day"
+    icon: mdi:brightness-6
+    options:
+      - "Usual (100%)"
+      - "Dimmer (70%)"
+      - "Dimmest (50%)"
+      - "Brighter (140%)"
+  moods_panel_living_room_night_hours:
+    name: "Living room Palm: night hours"
+    icon: mdi:weather-night
+    options:
+      - "This phone's own hours"
+      - "21:00 to 06:00"
+      - "21:30 to 06:30"
+      - "22:00 to 07:00"
+      - "22:30 to 07:00"
+      - "23:00 to 07:30"
+      - "No night hours"
+  moods_panel_living_room_screen:
+    name: "Living room Palm: screen by day"
+    icon: mdi:brightness-6
+    options:
+      - "Usual (100%)"
+      - "Dimmer (70%)"
+      - "Dimmest (50%)"
+      - "Brighter (140%)"
+
+script:
+  # "Put every setting back to Usual" on the dashboard. Picks the first option
+  # of every input_select.moods_* there is, so a setting added later is
+  # covered without editing this.
+  moods_settings_usual:
+    alias: "Moods: every setting back to Usual"
+    description: >-
+      Puts every Moods setting (each mood's look, the bed, and both phones)
+      back to its first option, which is how it behaved before the settings
+      screen existed. Nothing in the house changes until a mood is next set.
+    icon: mdi:backup-restore
+    mode: single
+    sequence:
+      - variables:
+          ids: >-
+            {{ states.input_select
+               | selectattr('entity_id', 'search', '^input_select[.]moods_')
+               | map(attribute='entity_id') | list }}
+      - condition: template
+        value_template: "{{ ids | count > 0 }}"
+      - action: input_select.select_first
+        target:
+          entity_id: "{{ ids }}"
+        continue_on_error: true
+
+lovelace:
+  dashboards:
+    # The settings screen. YAML mode, so it is in git like the rest of the
+    # package. Its file lives OUTSIDE packages/ (any .yaml under packages/ is
+    # loaded as a package): /config/dashboards/palm_moods.yaml.
+    # Registering it needs a restart once (YAML dashboards are set up only when
+    # Home Assistant starts); later edits to the file show on the next browser
+    # refresh. The url_path must contain a hyphen.
+    palm-moods:
+      mode: yaml
+      filename: dashboards/palm_moods.yaml
+      title: Moods
+      icon: mdi:palette-outline
+      show_in_sidebar: true
+      # Anyone with a Home Assistant login can use it. It hides
+      # nothing anyway: any user can call input_select.select_option, which is
+      # why every value is checked inside the moods.
+      require_admin: false

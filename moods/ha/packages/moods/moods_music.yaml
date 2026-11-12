@@ -1,0 +1,196 @@
+# Palm Moods: music.
+#
+# THE USUAL PLACE TO SET EACH MOOD'S MUSIC. Fill in media_id below; leave it
+# "" and that mood plays nothing. No other file needs to change, except that a
+# mood's "Music" confirmation mark is commented out in its mood file until you
+# enable it (see ha/README.md).
+#
+# A new mood can instead carry its music in its own file, so adding it stays a
+# one-file change: pass music_id (and optionally music_type, music_volume) in
+# its script.role_music_play step. Those win over the library below.
+#
+# Which service Music Assistant plays from is not known yet; Radio Browser is
+# the only confirmed source. A media_id can be anything Music Assistant's
+# play_media accepts, for example:
+#   a URI copied from the MA web UI   "spotify://playlist/37i9dQZF1DX4sWSpwq3LiO"
+#   a name MA will search for          "Lo-Fi Beats"   (set media_type to help it)
+#   a Radio Browser station            "radiobrowser://radio/<station uuid>"
+# media_type: playlist | album | artist | track | radio  (or "" to let MA guess)
+# volume: 0..1, set on the speakers before playing; capped by max_volume.
+#
+# Lights Out and Away never start music. That is enforced here as well as in
+# their mood files, so a library entry for them is ignored.
+#
+# Do not put a raw # inside unquoted YAML values (HA treats it as a comment).
+
+script:
+  role_music_play:
+    alias: "Role: Play a mood's music"
+    description: >-
+      Plays the music configured below for a mood on a speaker role's Music
+      Assistant players. Does nothing if no music is configured, the role has
+      no available Music Assistant players, or Music Assistant is missing.
+    icon: mdi:music
+    mode: parallel
+    max: 5
+    fields:
+      mood:
+        name: Mood slug
+        required: true
+        example: wind_down
+        selector:
+          text:
+      speakers:
+        name: Speaker role
+        description: A media_player.role_* group from moods_roles.yaml
+        required: true
+        example: media_player.role_bedroom_speaker
+        selector:
+          entity:
+            domain: media_player
+      music_id:
+        name: Music (optional)
+        description: >-
+          A media_id for Music Assistant. When given, it is used instead of
+          this mood's library entry below.
+        required: false
+        example: "radiobrowser://radio/<station uuid>"
+        selector:
+          text:
+      music_type:
+        name: Music type (optional)
+        description: playlist, album, artist, track or radio. Only used with music_id.
+        required: false
+        example: playlist
+        selector:
+          text:
+      music_volume:
+        name: Volume (optional)
+        description: 0 to 1, capped by max_volume.
+        required: false
+        example: 0.15
+        selector:
+          number:
+            min: 0
+            max: 1
+            step: 0.01
+    sequence:
+      # Safety values are set here, inside the sequence, so a caller cannot
+      # override them (script-level variables are only defaults for caller data).
+      - variables:
+          # ------------------------------------------------------------------
+          # Fill these in. One entry per mood slug.
+          # ------------------------------------------------------------------
+          max_volume: 0.35
+          library:
+            wind_down:
+              media_id: ""          # soft, slow; bedroom speaker
+              media_type: playlist
+              volume: 0.18
+            movie_night:
+              media_id: ""          # normally left empty: the TV has the soundbar
+              media_type: playlist
+              volume: 0.15
+            afterglow:
+              media_id: ""          # slow beats; house speakers
+              media_type: playlist
+              volume: 0.22
+            good_morning:
+              media_id: ""          # a radio station; kitchen speaker, kept quiet
+              media_type: radio
+              volume: 0.12
+            focus:
+              media_id: ""          # unused today: the office has no speaker role
+              media_type: playlist
+              volume: 0.15
+            hosting:
+              media_id: ""          # dinner / jazz; house speakers
+              media_type: playlist
+              volume: 0.22
+          # ------------------------------------------------------------------
+          never_music: ["lights_out", "away"]
+          mood_clean: "{{ mood | default('') | string | trim | lower }}"
+          pick: "{{ library[mood_clean] if mood_clean in library else {} }}"
+          given_id: "{{ music_id | default('') | string | trim }}"
+          media_id: >-
+            {{ given_id if given_id != '' else (pick.media_id | default('') | string | trim) }}
+          media_type: >-
+            {{ (music_type | default('') | string | trim) if given_id != ''
+               else (pick.media_type | default('') | string | trim) }}
+          volume: >-
+            {%- set v = music_volume if (music_volume is defined and music_volume != '')
+                        else pick.volume | default(0.15) %}
+            {{- [[v | float(0.15), 0] | max, max_volume] | min }}
+          members: "{{ state_attr(speakers | default(''), 'entity_id') or [] }}"
+          ma_entities: "{{ integration_entities('music_assistant') }}"
+          players: >-
+            {%- set ns = namespace(ok=[]) %}
+            {%- for p in members %}
+              {%- if p in ma_entities and 'guest_room' not in p
+                    and states(p) not in ['unknown', 'unavailable'] %}
+                {%- set ns.ok = ns.ok + [p] %}
+              {%- endif %}
+            {%- endfor %}
+            {{- ns.ok }}
+      - condition: template
+        value_template: >-
+          {{ mood_clean not in never_music and media_id != '' and players | count > 0 }}
+      # No continue_on_error here on purpose: if the volume cannot be set,
+      # nothing plays (never play at whatever level the speaker was left at).
+      - action: media_player.volume_set
+        target:
+          entity_id: "{{ players }}"
+        data:
+          volume_level: "{{ volume }}"
+      - if:
+          - condition: template
+            value_template: "{{ media_type != '' }}"
+        then:
+          - action: music_assistant.play_media
+            target:
+              entity_id: "{{ players }}"
+            data:
+              media_id: "{{ media_id }}"
+              media_type: "{{ media_type }}"
+              enqueue: replace
+        else:
+          - action: music_assistant.play_media
+            target:
+              entity_id: "{{ players }}"
+            data:
+              media_id: "{{ media_id }}"
+              enqueue: replace
+
+  role_music_stop:
+    alias: "Role: Stop music on a speaker role"
+    description: Pauses whatever is playing on a speaker role's players.
+    icon: mdi:music-off
+    mode: parallel
+    max: 5
+    fields:
+      speakers:
+        name: Speaker role
+        required: true
+        example: media_player.role_bedroom_speaker
+        selector:
+          entity:
+            domain: media_player
+    sequence:
+      # Safety values are set here, inside the sequence, so a caller cannot
+      # override them (script-level variables are only defaults for caller data).
+      - variables:
+          members: "{{ state_attr(speakers | default(''), 'entity_id') or [] }}"
+          playing: >-
+            {%- set ns = namespace(ok=[]) %}
+            {%- for p in members %}
+              {%- if 'guest_room' not in p and states(p) in ['playing', 'buffering'] %}
+                {%- set ns.ok = ns.ok + [p] %}
+              {%- endif %}
+            {%- endfor %}
+            {{- ns.ok }}
+      - condition: template
+        value_template: "{{ playing | count > 0 }}"
+      - action: media_player.media_pause
+        target:
+          entity_id: "{{ playing }}"
+        continue_on_error: true

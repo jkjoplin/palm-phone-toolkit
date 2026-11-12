@@ -1,0 +1,444 @@
+# Palm Moods: roles.
+#
+# THE ONLY FILE WITH REAL DEVICE ENTITY IDS. Moods name roles, never devices.
+# To add, remove or swap a device, edit the role here and reload; no mood file
+# changes. A role may be empty: moods still run, that step just does nothing.
+#
+# Kinds of role:
+#   light.role_<name>          light group; moods call light.turn_on/off on it
+#   switch.role_<name>         switch group (diffuser); turn_on/off and watchable
+#   media_player.role_<name>   speaker group; used by the music wrapper in
+#                              moods_music.yaml (members must be Music Assistant
+#                              players) and by script.role_music_stop
+#   script.role_<name>_<verb>  thin wrapper where a role is not a light/switch
+#   binary_sensor.role_<name>  read-only "did it happen" mirror for a wrapper
+#                              role, so the UI's confirmation marks can watch it
+#
+# Every entity id below is an EXAMPLE for a generic house. Replace each one
+# with your own (Developer tools -> States lists them), or comment it out.
+#
+# House rules baked in here (safety):
+#   - The bed role is one climate entity (a bed cooling pad or similar). If your
+#     bed has two sides, point it at one side only. No mood moves a bed base.
+#   - The guest room lamp is reached only through the three role_guest_room_*
+#     scripts below, which never raise its brightness and obey
+#     input_boolean.moods_leave_guest_room_alone. The night light is opt-in: it
+#     does nothing until input_boolean.moods_guest_room_night_light is turned on
+#     (after the supervised test in ha/README.md). The guest room lamp is
+#     deliberately NOT in light.role_all_lights.
+#   - No speaker role may contain a guest room player.
+#
+# Some device ids appear in more than one place below (a wrapper's on and off
+# scripts plus its mirror). Each copy is marked "SAME ID AS"; when swapping a
+# device, change every copy (search this file for the old id).
+#
+# Empty groups are written in brackets, one commented id per line, each ending
+# in a comma. Uncommenting any of those lines (just remove the "# ") is valid.
+# Do not mix the styles: a group is either "entities: [ ... ]" or a list of
+# "- light.x" lines under "entities:", never both.
+#
+# Do not put a raw # inside unquoted YAML values (HA treats it as a comment).
+
+input_boolean:
+  # Master switch: on = moods never touch the guest room lamp at all (no night
+  # light, and Away does not turn it off). Starts off.
+  moods_leave_guest_room_alone:
+    name: Moods leave the guest room alone
+    icon: mdi:bed-outline
+  # Opt-in: on = Lights Out may bring up the guest room night light (and Good
+  # Morning turns that night light off again). Starts OFF. Leave it off until
+  # the supervised test in ha/README.md has passed. No "initial:" on purpose:
+  # that would reset it on every restart.
+  moods_guest_room_night_light:
+    name: Moods may light the guest room night light
+    icon: mdi:weather-night
+
+light:
+  # ---- Bedroom ---------------------------------------------------------------
+  - platform: group
+    name: "Role: Bedroom lamps"
+    unique_id: moods_role_bedroom_lamps
+    entities:
+      - light.bedroom_lamp   # SAME ID AS Bedroom movie lamp below
+      # A second bedroom light, commented out to show the style. Uncomment to
+      # use it:
+      # - light.bedroom_under_bed_light
+
+  # The one lamp Movie Night keeps on, deep red. Must also be a member of
+  # Bedroom lamps; every other Bedroom lamp is switched off by Movie Night.
+  - platform: group
+    name: "Role: Bedroom movie lamp"
+    unique_id: moods_role_bedroom_movie_lamp
+    entities:
+      - light.bedroom_lamp   # SAME ID AS in Bedroom lamps above
+
+  # ---- Office ----------------------------------------------------------------
+  - platform: group
+    name: "Role: Office lights"
+    unique_id: moods_role_office_lights
+    entities:
+      - light.office_ceiling_light # a dimmer, brightness only
+      - light.office_desk_lamp     # SAME ID AS Office lamp below
+
+  # The one office lamp the Showcase example mood recolours (showcase.yaml).
+  # Must be a colour bulb. Also a member of Office lights above.
+  - platform: group
+    name: "Role: Office lamp"
+    unique_id: moods_role_office_lamp
+    entities:
+      - light.office_desk_lamp     # SAME ID AS in Office lights above
+
+  # ---- Loft ------------------------------------------------------------------
+  - platform: group
+    name: "Role: Loft lamp"
+    unique_id: moods_role_loft_lamp
+    entities:
+      - light.loft_floor_lamp
+
+  # ---- Guest room (only via the guest room scripts below) --------------------------
+  - platform: group
+    name: "Role: Guest room lamp"
+    unique_id: moods_role_guest_room_lamp
+    entities:
+      - light.guest_room_lamp
+
+  # ---- Living room: empty in this example ---------------------------------
+  # Shows an empty role. To use it, remove the "# " from the lines (keep the
+  # brackets and the commas), change the ids to yours and reload; moods that
+  # light the living room (Hosting) pick them up with no mood edits.
+  - platform: group
+    name: "Role: Living room lights"
+    unique_id: moods_role_living_room_lights
+    entities: [
+      # light.living_room_lamp,
+      # light.living_room_ceiling_light,
+    ]
+
+  # ---- Kitchen: empty in this example ---------------------------------------
+  # To add a lamp, put its id on its own line inside the brackets, followed by
+  # a comma, like the example (or remove the "# " from the example and change
+  # the id). Keep the brackets.
+  - platform: group
+    name: "Role: Kitchen lights"
+    unique_id: moods_role_kitchen_lights
+    entities: [
+      # light.kitchen_example_lamp,
+    ]
+
+  # ---- Outdoors --------------------------------------------------------------
+  - platform: group
+    name: "Role: Patio lights"
+    unique_id: moods_role_patio_lights
+    entities:
+      - light.patio_string_lights
+
+  - platform: group
+    name: "Role: Porch lights"
+    unique_id: moods_role_porch_lights
+    entities:
+      - light.porch_light
+      - light.porch_wall_light
+
+  - platform: group
+    name: "Role: Driveway lights"
+    unique_id: moods_role_driveway_lights
+    entities:
+      - light.driveway_light
+
+  # ---- All lights (everything above EXCEPT the guest room) ----------------------
+  # Built from the room roles, so a device added to a room role is covered here
+  # automatically. Add any new room role to this list.
+  - platform: group
+    name: "Role: All lights"
+    unique_id: moods_role_all_lights
+    entities:
+      - light.role_bedroom_lamps
+      - light.role_office_lights
+      - light.role_loft_lamp
+      - light.role_living_room_lights
+      - light.role_kitchen_lights
+      - light.role_patio_lights
+      - light.role_porch_lights
+      - light.role_driveway_lights
+
+switch:
+  - platform: group
+    name: "Role: Diffuser"
+    unique_id: moods_role_diffuser
+    entities:
+      - switch.diffuser_plug   # a smart plug with the diffuser on it
+
+media_player:
+  # Members must be Music Assistant players (the *_2 / *_3 style entities whose
+  # integration is music_assistant), not the plain Cast ones, and never the
+  # hidden "+"/AirPlay duplicates or a guest room player.
+  - platform: group
+    name: "Role: Bedroom speaker"
+    unique_id: moods_role_bedroom_speaker
+    entities:
+      - media_player.bedroom_speaker_2       # also the TV soundbar
+
+  - platform: group
+    name: "Role: Kitchen speaker"
+    unique_id: moods_role_kitchen_speaker
+    entities:
+      - media_player.kitchen_speaker_2
+
+  - platform: group
+    name: "Role: House speakers"
+    unique_id: moods_role_house_speakers
+    entities:
+      - media_player.kitchen_speaker_2
+      - media_player.dining_room_speaker_2
+
+template:
+  - binary_sensor:
+      # SAME ID AS script.role_bedroom_tv_on / _off (remote.bedroom_tv)
+      - name: "Role: Bedroom TV"
+        unique_id: moods_role_bedroom_tv
+        icon: mdi:television
+        state: "{{ is_state('remote.bedroom_tv', 'on') }}"
+        availability: "{{ states('remote.bedroom_tv') not in ['unknown', 'unavailable'] }}"
+
+      # SAME ID AS script.role_bed_cool / _off. On when the bed
+      # is in heat_cool with a target in the cooling range (75 F or below). It
+      # cannot tell a mood's 66 from the bed's own schedule at, say, 68: it
+      # shows "cooling", not "this exact command landed".
+      - name: "Role: Bed"
+        unique_id: moods_role_bed
+        icon: mdi:bed-outline
+        state: >-
+          {{ is_state('climate.bedroom_bed', 'heat_cool')
+             and state_attr('climate.bedroom_bed', 'temperature')
+                 | float(999) <= 75 }}
+        availability: "{{ states('climate.bedroom_bed') not in ['unknown', 'unavailable'] }}"
+
+      # SAME ID AS script.role_thermostat_eco / _resume (climate.thermostat)
+      - name: "Role: Thermostat eco"
+        unique_id: moods_role_thermostat_eco
+        icon: mdi:leaf
+        state: "{{ is_state_attr('climate.thermostat', 'preset_mode', 'eco') }}"
+        availability: "{{ states('climate.thermostat') not in ['unknown', 'unavailable'] }}"
+
+script:
+  # ---- Bedroom TV (a streaming box's remote entity) ---------------------------
+  # Powering the streaming box wakes the TV over HDMI-CEC.
+  role_bedroom_tv_on:
+    alias: "Role: Bedroom TV on"
+    icon: mdi:television
+    mode: single
+    sequence:
+      # Safety values are set here, inside the sequence, so a caller cannot
+      # override them (script-level variables are only defaults for caller data).
+      - variables:
+          tv: remote.bedroom_tv   # SAME ID AS the other TV script and the mirror
+      - condition: template
+        value_template: "{{ states(tv) not in ['unknown', 'unavailable'] }}"
+      - action: remote.turn_on
+        target:
+          entity_id: "{{ tv }}"
+
+  role_bedroom_tv_off:
+    alias: "Role: Bedroom TV off"
+    icon: mdi:television-off
+    mode: single
+    sequence:
+      # Safety values are set here, inside the sequence, so a caller cannot
+      # override them (script-level variables are only defaults for caller data).
+      - variables:
+          tv: remote.bedroom_tv   # SAME ID AS the other TV script and the mirror
+      - condition: template
+        value_template: "{{ is_state(tv, 'on') }}"
+      - action: remote.turn_off
+        target:
+          entity_id: "{{ tv }}"
+
+  # ---- Bed cooling (one climate entity; one side only on a two-sided bed) ----
+  role_bed_cool:
+    alias: "Role: Bed to temperature"
+    icon: mdi:snowflake-thermometer
+    mode: single
+    fields:
+      temperature:
+        name: Temperature
+        description: >-
+          Target in degrees F, kept within a sleeping range of 60 to 75 F (and
+          the bed's own limits), so a typo can never heat the bed.
+        default: 66
+        example: 66
+        selector:
+          number:
+            min: 60
+            max: 75
+            unit_of_measurement: "°F"
+    sequence:
+      # Safety values are set here, inside the sequence, so a caller cannot
+      # override them (script-level variables are only defaults for caller data).
+      - variables:
+          bed: climate.bedroom_bed   # SAME ID AS the other bed script and the mirror
+          safe_lo: 60
+          safe_hi: 75
+          bed_lo: "{{ state_attr(bed, 'min_temp') | float(60) }}"
+          bed_hi: "{{ state_attr(bed, 'max_temp') | float(0) }}"
+          lo: "{{ [safe_lo, bed_lo] | max }}"
+          hi: "{{ [safe_hi, bed_hi] | min }}"
+          target_temp: "{{ [[temperature | default(66) | float(66), lo] | max, hi] | min }}"
+      - condition: template
+        value_template: "{{ states(bed) not in ['unknown', 'unavailable'] }}"
+      # Unit guard: a Fahrenheit bed reports a max well above 75 (often 110).
+      # If HA ever reported it in C (max about 43), do nothing rather than
+      # send 66 into a Celsius range.
+      - condition: template
+        value_template: "{{ bed_hi > safe_hi and lo <= hi }}"
+      - action: climate.set_temperature
+        target:
+          entity_id: "{{ bed }}"
+        data:
+          hvac_mode: heat_cool
+          temperature: "{{ target_temp }}"
+
+  role_bed_off:
+    alias: "Role: Bed off"
+    icon: mdi:bed-outline
+    mode: single
+    sequence:
+      # Safety values are set here, inside the sequence, so a caller cannot
+      # override them (script-level variables are only defaults for caller data).
+      - variables:
+          bed: climate.bedroom_bed   # SAME ID AS the other bed script and the mirror
+      - condition: template
+        value_template: "{{ states(bed) not in ['unknown', 'unavailable', 'off'] }}"
+      - action: climate.set_hvac_mode
+        target:
+          entity_id: "{{ bed }}"
+        data:
+          hvac_mode: "off"
+
+  # ---- Thermostat ------------------------------------------------------------
+  role_thermostat_eco:
+    alias: "Role: Thermostat eco"
+    icon: mdi:leaf
+    mode: single
+    sequence:
+      # Safety values are set here, inside the sequence, so a caller cannot
+      # override them (script-level variables are only defaults for caller data).
+      - variables:
+          stat: climate.thermostat   # SAME ID AS the other thermostat script and the mirror
+      - condition: template
+        value_template: >-
+          {{ states(stat) not in ['unknown', 'unavailable', 'off']
+             and 'eco' in (state_attr(stat, 'preset_modes') or []) }}
+      - action: climate.set_preset_mode
+        target:
+          entity_id: "{{ stat }}"
+        data:
+          preset_mode: eco
+
+  role_thermostat_resume:
+    alias: "Role: Thermostat resume from eco"
+    icon: mdi:thermostat
+    mode: single
+    sequence:
+      # Safety values are set here, inside the sequence, so a caller cannot
+      # override them (script-level variables are only defaults for caller data).
+      - variables:
+          stat: climate.thermostat   # SAME ID AS the other thermostat script and the mirror
+      - condition: template
+        value_template: >-
+          {{ is_state_attr(stat, 'preset_mode', 'eco')
+             and 'none' in (state_attr(stat, 'preset_modes') or []) }}
+      - action: climate.set_preset_mode
+        target:
+          entity_id: "{{ stat }}"
+        data:
+          preset_mode: none
+
+  # ---- Guest room: gentle, opt-in, never bright ---------------------------------
+  # Night light: only when input_boolean.moods_guest_room_night_light is on (it
+  # starts off) and "leave the guest room alone" is off. If the lamp is off, bring
+  # it up at a very low warm level. If it is already on, leave it exactly as it
+  # is (it was turned on on purpose). Never raises brightness.
+  # Moods START this script (script.turn_on) rather than wait for it, so a
+  # mood being restarted or replaced cannot cut off the 2 s re-send.
+  role_guest_room_night_light:
+    alias: "Role: Guest room night light"
+    icon: mdi:weather-night
+    mode: single
+    sequence:
+      # Safety values are set here, inside the sequence, so a caller cannot
+      # override them (script-level variables are only defaults for caller data).
+      - variables:
+          lamp: light.role_guest_room_lamp
+          night_pct: 3
+          night_rgb: [255, 120, 30]
+      - condition: template
+        value_template: >-
+          {{ not is_state('input_boolean.moods_leave_guest_room_alone', 'on')
+             and is_state('input_boolean.moods_guest_room_night_light', 'on') }}
+      - condition: template
+        value_template: "{{ is_state(lamp, 'off') }}"
+      - action: light.turn_on
+        target:
+          entity_id: "{{ lamp }}"
+        data:
+          brightness_pct: "{{ night_pct }}"
+          rgb_color: "{{ night_rgb }}"
+      # Some integrations (Govee, for one) send brightness, colour, then power. If the bulb
+      # ignored brightness while it was off, this second pass pulls it down.
+      - delay:
+          seconds: 2
+      # Skip the re-send if someone (or Away) turned the lamp off meanwhile.
+      - condition: template
+        value_template: "{{ is_state(lamp, 'on') }}"
+      - action: light.turn_on
+        target:
+          entity_id: "{{ lamp }}"
+        data:
+          brightness_pct: "{{ night_pct }}"
+        continue_on_error: true
+
+  # Morning: turn the night light off again, but only if moods own it (the
+  # opt-in is on) and the lamp is still at night-light level. A lamp someone
+  # set brighter is left alone.
+  role_guest_room_night_light_off:
+    alias: "Role: Guest room night light off"
+    icon: mdi:weather-sunny
+    mode: single
+    sequence:
+      # Safety values are set here, inside the sequence, so a caller cannot
+      # override them (script-level variables are only defaults for caller data).
+      - variables:
+          lamp: light.role_guest_room_lamp
+          night_max_brightness: 10   # of 255; the night light is 3%, about 8
+      - condition: template
+        value_template: >-
+          {{ not is_state('input_boolean.moods_leave_guest_room_alone', 'on')
+             and is_state('input_boolean.moods_guest_room_night_light', 'on')
+             and is_state(lamp, 'on')
+             and (state_attr(lamp, 'brightness') | int(255)) <= night_max_brightness }}
+      - action: light.turn_off
+        target:
+          entity_id: "{{ lamp }}"
+
+  # Everything off (Away): stop a night light that is mid-way, then turn the
+  # lamp off if it is on. Obeys "leave the guest room alone" only.
+  role_guest_room_lamp_off:
+    alias: "Role: Guest room lamp off"
+    icon: mdi:lightbulb-off-outline
+    mode: single
+    sequence:
+      # Safety values are set here, inside the sequence, so a caller cannot
+      # override them (script-level variables are only defaults for caller data).
+      - variables:
+          lamp: light.role_guest_room_lamp
+      - condition: template
+        value_template: "{{ not is_state('input_boolean.moods_leave_guest_room_alone', 'on') }}"
+      - action: script.turn_off
+        target:
+          entity_id: script.role_guest_room_night_light
+        continue_on_error: true
+      - condition: template
+        value_template: "{{ is_state(lamp, 'on') }}"
+      - action: light.turn_off
+        target:
+          entity_id: "{{ lamp }}"

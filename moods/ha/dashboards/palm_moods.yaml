@@ -1,0 +1,820 @@
+# Palm Moods: the "Moods" dashboard in Home Assistant (YAML mode, kept in git).
+#
+# Registered by `lovelace: dashboards: palm-moods` in
+# packages/moods/moods_settings.yaml. Deployed to /config/dashboards/ (never
+# under packages/: every .yaml there is loaded as a package).
+# Built-in cards only. Edits to this file show on the next browser refresh,
+# with no restart and no reload.
+#
+# What is on it:
+#   Moods   now (current mood, since when, the last refusal), set a mood
+#           (one button per mood, listed by hand; Showcase's only while
+#           that example mood is installed), Undo; one small section per mood
+#           with its one setting; safety; put everything back; how to add a mood
+#   Phones  night hours and day brightness for each Palm
+#   Devices which devices fill each role, and which are not answering
+#
+# Rules for editing: no YAML anchors or merge keys (Home Assistant's loader
+# warns on every override), and `content: |-` for any markdown with Jinja
+# (`>-` folds the lines together). Every button that changes the house asks
+# first, on both the tile and its icon.
+title: Moods
+views:
+  # ==================================================================== Moods
+  - title: Moods
+    path: moods
+    type: sections
+    max_columns: 3
+    sections:
+      # ---- Now ------------------------------------------------------------
+      - type: grid
+        cards:
+          - type: heading
+            heading: Now
+            heading_style: title
+            icon: mdi:palette-outline
+          - type: markdown
+            text_only: true
+            content: |-
+              {%- set cur = states('input_text.house_mood') %}
+              {%- set s = 'script.mood_' ~ cur %}
+              {%- if states('script.mood_begin') in ['unknown', 'unavailable'] %}
+              The Palm Moods package is not loaded.
+              {%- elif cur in ['', 'unknown', 'unavailable'] %}
+              No mood has been set yet.
+              {%- else %}
+              {%- set name = state_attr(s, 'mood_name') or cur | replace('_', ' ') | title %}
+              {%- set t = state_attr('input_datetime.house_mood_since', 'timestamp') | float(0) %}
+              {%- set status = state_attr(s, 'mood_status') %}
+              {%- set p = states('input_text.house_mood_previous') %}
+              ## {{ name }}
+              {{ state_attr(s, 'mood_tagline') or '' }}
+
+              {% if t > 0 %}Since {{ t | timestamp_custom('%H:%M') }}{% if t | timestamp_custom('%Y-%m-%d') != now().strftime('%Y-%m-%d') %} on {{ t | timestamp_custom('%a %-d %b') }}{% endif %}.{% endif %}{% if status %} {{ status }}.{% endif %}
+              {%- if p not in ['', 'unknown', 'unavailable'] %}
+              Before that: {{ state_attr('script.mood_' ~ p, 'mood_name') or p | replace('_', ' ') | title }}.
+              {%- endif %}
+              {%- endif %}
+          - type: markdown
+            text_only: true
+            visibility:
+              - condition: state
+                entity: input_boolean.vacation_mode
+                state: "on"
+            content: >-
+              <ha-alert alert-type="info">Vacation mode is on, so only Away
+              can run.</ha-alert>
+          - type: markdown
+            text_only: true
+            visibility:
+              - condition: state
+                entity: input_text.house_mood_notice
+                state_not: ""
+              - condition: state
+                entity: input_text.house_mood_notice
+                state_not: unknown
+              - condition: state
+                entity: input_text.house_mood_notice
+                state_not: unavailable
+            content: |-
+              {%- set n = states('input_text.house_mood_notice').split('|') %}
+              {%- if n | count >= 3 %}
+              {%- set name = state_attr('script.mood_' ~ n[0], 'mood_name') or n[0] | replace('_', ' ') | title %}
+              {%- set t = as_timestamp(n[1], 0) %}
+              <ha-alert alert-type="warning" title="Last request refused">{{ n[2:] | join('|') }}<br>{{ name }} was asked for{% if t > 0 %} at {{ t | timestamp_custom('%H:%M') }}{% endif %}.</ha-alert>
+              {%- endif %}
+          - type: heading
+            heading: Set a mood
+            heading_style: subtitle
+          - type: tile
+            entity: script.mood_wind_down
+            name: Wind Down
+            icon: mdi:candle
+            hide_state: true
+            vertical: false
+            grid_options:
+              columns: 6
+            tap_action:
+              action: perform-action
+              perform_action: script.turn_on
+              target:
+                entity_id: script.mood_wind_down
+              confirmation:
+                text: Set the house to Wind Down now? The bedroom lamps go low and the diffuser comes on.
+            icon_tap_action:
+              action: perform-action
+              perform_action: script.turn_on
+              target:
+                entity_id: script.mood_wind_down
+              confirmation:
+                text: Set the house to Wind Down now? The bedroom lamps go low and the diffuser comes on.
+            hold_action:
+              action: none
+          - type: tile
+            entity: script.mood_movie_night
+            name: Movie Night
+            icon: mdi:movie-open-outline
+            hide_state: true
+            vertical: false
+            grid_options:
+              columns: 6
+            tap_action:
+              action: perform-action
+              perform_action: script.turn_on
+              target:
+                entity_id: script.mood_movie_night
+              confirmation:
+                text: Set the house to Movie Night now? The bedroom TV comes on and the other bedroom lamps go off.
+            icon_tap_action:
+              action: perform-action
+              perform_action: script.turn_on
+              target:
+                entity_id: script.mood_movie_night
+              confirmation:
+                text: Set the house to Movie Night now? The bedroom TV comes on and the other bedroom lamps go off.
+            hold_action:
+              action: none
+          - type: tile
+            entity: script.mood_afterglow
+            name: Afterglow
+            icon: mdi:string-lights
+            hide_state: true
+            vertical: false
+            grid_options:
+              columns: 6
+            tap_action:
+              action: perform-action
+              perform_action: script.turn_on
+              target:
+                entity_id: script.mood_afterglow
+              confirmation:
+                text: Set the house to Afterglow now? The loft and the patio light up in colour.
+            icon_tap_action:
+              action: perform-action
+              perform_action: script.turn_on
+              target:
+                entity_id: script.mood_afterglow
+              confirmation:
+                text: Set the house to Afterglow now? The loft and the patio light up in colour.
+            hold_action:
+              action: none
+          - type: tile
+            entity: script.mood_lights_out
+            name: Lights Out
+            icon: mdi:weather-night
+            hide_state: true
+            vertical: false
+            grid_options:
+              columns: 6
+            tap_action:
+              action: perform-action
+              perform_action: script.turn_on
+              target:
+                entity_id: script.mood_lights_out
+              confirmation:
+                text: Set the house to Lights Out now? Every light in the house goes off (not the guest room), and the TV too.
+            icon_tap_action:
+              action: perform-action
+              perform_action: script.turn_on
+              target:
+                entity_id: script.mood_lights_out
+              confirmation:
+                text: Set the house to Lights Out now? Every light in the house goes off (not the guest room), and the TV too.
+            hold_action:
+              action: none
+          - type: tile
+            entity: script.mood_good_morning
+            name: Good Morning
+            icon: mdi:weather-sunset-up
+            hide_state: true
+            vertical: false
+            grid_options:
+              columns: 6
+            tap_action:
+              action: perform-action
+              perform_action: script.turn_on
+              target:
+                entity_id: script.mood_good_morning
+              confirmation:
+                text: Set the house to Good Morning now? The bedroom lamps start to rise. It only runs from 05:00 to 11:00.
+            icon_tap_action:
+              action: perform-action
+              perform_action: script.turn_on
+              target:
+                entity_id: script.mood_good_morning
+              confirmation:
+                text: Set the house to Good Morning now? The bedroom lamps start to rise. It only runs from 05:00 to 11:00.
+            hold_action:
+              action: none
+          - type: tile
+            entity: script.mood_focus
+            name: Focus
+            icon: mdi:desk-lamp
+            hide_state: true
+            vertical: false
+            grid_options:
+              columns: 6
+            tap_action:
+              action: perform-action
+              perform_action: script.turn_on
+              target:
+                entity_id: script.mood_focus
+              confirmation:
+                text: Set the house to Focus now? Only the office lights change.
+            icon_tap_action:
+              action: perform-action
+              perform_action: script.turn_on
+              target:
+                entity_id: script.mood_focus
+              confirmation:
+                text: Set the house to Focus now? Only the office lights change.
+            hold_action:
+              action: none
+          - type: tile
+            entity: script.mood_hosting
+            name: Hosting
+            icon: mdi:glass-wine
+            hide_state: true
+            vertical: false
+            grid_options:
+              columns: 6
+            tap_action:
+              action: perform-action
+              perform_action: script.turn_on
+              target:
+                entity_id: script.mood_hosting
+              confirmation:
+                text: Set the house to Hosting now? The patio and the porch light up.
+            icon_tap_action:
+              action: perform-action
+              perform_action: script.turn_on
+              target:
+                entity_id: script.mood_hosting
+              confirmation:
+                text: Set the house to Hosting now? The patio and the porch light up.
+            hold_action:
+              action: none
+          # Showcase is an optional example mood (packages/moods/showcase.yaml);
+          # its button shows only while that mood exists (a script is "on" or
+          # "off"; a missing one is neither), so deleting the file hides it.
+          - type: tile
+            entity: script.mood_showcase
+            name: Showcase
+            icon: mdi:palette
+            hide_state: true
+            vertical: false
+            grid_options:
+              columns: 6
+            visibility:
+              - condition: state
+                entity: script.mood_showcase
+                state:
+                  - "on"
+                  - "off"
+            tap_action:
+              action: perform-action
+              perform_action: script.turn_on
+              target:
+                entity_id: script.mood_showcase
+              confirmation:
+                text: Set the house to Showcase now? Only the office lamp changes, to its next colour.
+            icon_tap_action:
+              action: perform-action
+              perform_action: script.turn_on
+              target:
+                entity_id: script.mood_showcase
+              confirmation:
+                text: Set the house to Showcase now? Only the office lamp changes, to its next colour.
+            hold_action:
+              action: none
+          - type: tile
+            entity: script.mood_away
+            name: Away
+            icon: mdi:home-export-outline
+            hide_state: true
+            vertical: false
+            grid_options:
+              columns: 6
+            tap_action:
+              action: perform-action
+              perform_action: script.turn_on
+              target:
+                entity_id: script.mood_away
+              confirmation:
+                text: Set the house to Away now? Everything goes off and the heating goes to eco. The guest room lamp goes off too, unless "Leave the guest room alone" is on.
+            icon_tap_action:
+              action: perform-action
+              perform_action: script.turn_on
+              target:
+                entity_id: script.mood_away
+              confirmation:
+                text: Set the house to Away now? Everything goes off and the heating goes to eco. The guest room lamp goes off too, unless "Leave the guest room alone" is on.
+            hold_action:
+              action: none
+          - type: tile
+            entity: script.mood_undo
+            name: Undo (back to the mood before)
+            icon: mdi:undo-variant
+            hide_state: true
+            vertical: false
+            grid_options:
+              columns: 12
+            visibility:
+              - condition: state
+                entity: input_text.house_mood_previous
+                state_not: ""
+              - condition: state
+                entity: input_text.house_mood_previous
+                state_not: unknown
+            tap_action:
+              action: perform-action
+              perform_action: script.turn_on
+              target:
+                entity_id: script.mood_undo
+              confirmation:
+                text: Go back to the mood before this one?
+            icon_tap_action:
+              action: perform-action
+              perform_action: script.turn_on
+              target:
+                entity_id: script.mood_undo
+              confirmation:
+                text: Go back to the mood before this one?
+            hold_action:
+              action: none
+
+      # ---- Wind Down ------------------------------------------------------
+      - type: grid
+        cards:
+          - type: heading
+            heading: Wind Down
+            heading_style: title
+            icon: mdi:candle
+          - type: markdown
+            text_only: true
+            content: |-
+              {{ state_attr('script.mood_wind_down', 'mood_tagline') or '' }}
+          - type: tile
+            entity: input_select.moods_wind_down_look
+            name: Bedroom lamps
+            icon: mdi:lamp-outline
+            hide_state: true
+            features_position: bottom
+            features:
+              - type: select-options
+            grid_options:
+              columns: 12
+          - type: markdown
+            text_only: true
+            content: >-
+              Only the bedroom lamps change. The diffuser still comes on.
+
+      # ---- Movie Night ----------------------------------------------------
+      - type: grid
+        cards:
+          - type: heading
+            heading: Movie Night
+            heading_style: title
+            icon: mdi:movie-open-outline
+          - type: markdown
+            text_only: true
+            content: |-
+              {{ state_attr('script.mood_movie_night', 'mood_tagline') or '' }}
+          - type: tile
+            entity: input_select.moods_movie_night_look
+            name: The red lamp
+            icon: mdi:lamp
+            hide_state: true
+            features_position: bottom
+            features:
+              - type: select-options
+            grid_options:
+              columns: 12
+          - type: markdown
+            text_only: true
+            content: >-
+              The one bedroom lamp left on while the TV plays. Every other
+              bedroom lamp goes off.
+
+      # ---- Afterglow ------------------------------------------------------
+      - type: grid
+        cards:
+          - type: heading
+            heading: Afterglow
+            heading_style: title
+            icon: mdi:string-lights
+          - type: markdown
+            text_only: true
+            content: |-
+              {{ state_attr('script.mood_afterglow', 'mood_tagline') or '' }}
+          - type: tile
+            entity: input_select.moods_afterglow_look
+            name: Loft and patio
+            icon: mdi:string-lights
+            hide_state: true
+            features_position: bottom
+            features:
+              - type: select-options
+            grid_options:
+              columns: 12
+          - type: markdown
+            text_only: true
+            content: >-
+              The Govee scene "Sunset Glow" where the light has it, otherwise a
+              warm colour, at these levels. The patio goes off at 01:00 if
+              Afterglow is still the mood.
+
+      # ---- Lights Out -----------------------------------------------------
+      - type: grid
+        cards:
+          - type: heading
+            heading: Lights Out
+            heading_style: title
+            icon: mdi:weather-night
+          - type: markdown
+            text_only: true
+            content: |-
+              {{ state_attr('script.mood_lights_out', 'mood_tagline') or '' }}
+          - type: tile
+            entity: input_select.moods_lights_out_bed
+            name: The bed
+            icon: mdi:bed-outline
+            hide_state: true
+            features_position: bottom
+            features:
+              - type: select-options
+            grid_options:
+              columns: 12
+          - type: markdown
+            text_only: true
+            content: >-
+              The bed is always kept between 60 and 75 °F, whatever is chosen
+              here.
+
+      # ---- Good Morning ---------------------------------------------------
+      - type: grid
+        cards:
+          - type: heading
+            heading: Good Morning
+            heading_style: title
+            icon: mdi:weather-sunset-up
+          - type: markdown
+            text_only: true
+            content: |-
+              {{ state_attr('script.mood_good_morning', 'mood_tagline') or '' }}
+          - type: tile
+            entity: input_select.moods_good_morning_look
+            name: How bright it gets
+            icon: mdi:weather-sunset-up
+            hide_state: true
+            features_position: bottom
+            features:
+              - type: select-options
+            grid_options:
+              columns: 12
+          - type: markdown
+            text_only: true
+            content: |-
+              {%- set w = state_attr('script.mood_good_morning', 'mood_window') %}
+              The bedroom lamps start at 10% and rise in four steps over about 90 seconds, never above 70%. The rise stops if someone dims or turns off the lamp.
+              {%- if w is mapping and w.get('from') and w.get('to') %} Runs only from {{ w.get('from') }} to {{ w.get('to') }}.{% endif %}
+
+      # ---- Focus ----------------------------------------------------------
+      - type: grid
+        cards:
+          - type: heading
+            heading: Focus
+            heading_style: title
+            icon: mdi:desk-lamp
+          - type: markdown
+            text_only: true
+            content: |-
+              {{ state_attr('script.mood_focus', 'mood_tagline') or '' }}
+          - type: tile
+            entity: input_select.moods_focus_look
+            name: Office lights
+            icon: mdi:desk-lamp
+            hide_state: true
+            features_position: bottom
+            features:
+              - type: select-options
+            grid_options:
+              columns: 12
+          - type: markdown
+            text_only: true
+            content: >-
+              Brightness and colour (K: lower is warmer). Nothing else in the
+              house changes.
+
+      # ---- Hosting --------------------------------------------------------
+      - type: grid
+        cards:
+          - type: heading
+            heading: Hosting
+            heading_style: title
+            icon: mdi:glass-wine
+          - type: markdown
+            text_only: true
+            content: |-
+              {{ state_attr('script.mood_hosting', 'mood_tagline') or '' }}
+          - type: tile
+            entity: input_select.moods_hosting_look
+            name: Patio and porch
+            icon: mdi:glass-wine
+            hide_state: true
+            features_position: bottom
+            features:
+              - type: select-options
+            grid_options:
+              columns: 12
+          - type: markdown
+            text_only: true
+            content: >-
+              The patio plays the Govee scene "Candlelight" where it has it,
+              otherwise warm white. The living room and kitchen light up too
+              once they have lights.
+
+      # ---- Away -----------------------------------------------------------
+      - type: grid
+        cards:
+          - type: heading
+            heading: Away
+            heading_style: title
+            icon: mdi:home-export-outline
+          - type: markdown
+            text_only: true
+            content: |-
+              {{ state_attr('script.mood_away', 'mood_tagline') or '' }}
+
+              Nothing to adjust: everything goes off and the heating goes to eco (the guest room lamp too, unless "Leave the guest room alone" is on). The next mood takes the heating out of eco again. Away never turns on vacation mode.
+
+      # ---- Safety ---------------------------------------------------------
+      - type: grid
+        cards:
+          - type: heading
+            heading: Safety
+            heading_style: title
+            icon: mdi:shield-home-outline
+          - type: tile
+            entity: input_boolean.moods_leave_guest_room_alone
+            name: Leave the guest room alone
+            icon: mdi:bed-outline
+            grid_options:
+              columns: 12
+            tap_action:
+              action: toggle
+            icon_tap_action:
+              action: toggle
+          - type: tile
+            entity: input_boolean.moods_guest_room_night_light
+            name: Lights Out may light the guest room night light
+            icon: mdi:weather-night
+            grid_options:
+              columns: 12
+            tap_action:
+              action: toggle
+              confirmation:
+                text: >-
+                  Only turn this on after the supervised guest room test in the
+                  Palm Moods README has passed (the lamp never flashed bright).
+                  Change it?
+            icon_tap_action:
+              action: toggle
+              confirmation:
+                text: >-
+                  Only turn this on after the supervised guest room test in the
+                  Palm Moods README has passed (the lamp never flashed bright).
+                  Change it?
+            # no hold: more-info would offer a plain switch without the warning
+            hold_action:
+              action: none
+          - type: markdown
+            text_only: true
+            content: |-
+              {%- if is_state('input_boolean.moods_leave_guest_room_alone', 'on') %}
+              Moods never touch the guest room lamp, night light included. Away leaves it as it is.
+              {%- elif is_state('input_boolean.moods_guest_room_night_light', 'on') %}
+              Lights Out lights the guest room lamp at 3% amber, and only if it is off. Good Morning turns that night light off again if nobody changed it. Away turns the lamp off.
+              {%- else %}
+              No mood lights the guest room. Away turns its lamp off. The night light stays off until it has passed the supervised test once.
+              {%- endif %}
+          # Vacation mode is shown as a line of text, not a tile: it usually
+          # belongs to another system (an alarm or presence simulation) and may
+          # arm its alerts, so nothing here offers to change it.
+          - type: markdown
+            text_only: true
+            content: |-
+              {%- set v = states('input_boolean.vacation_mode') %}
+              {%- if v == 'on' %}
+              **Vacation mode is on** (set elsewhere): only Away can run.
+              {%- elif v == 'off' %}
+              **Vacation mode is off** (set elsewhere, not here).
+              {%- else %}
+              **Vacation mode:** not known right now (set elsewhere, not here).
+              {%- endif %}
+          - type: markdown
+            text_only: true
+            content: >-
+              **Always true, whatever this page says:** the bed is only ever
+              set between 60 and 75 °F; no speaker in the guest room is
+              ever used; music is never louder than 35% and never starts at
+              Lights Out or Away; while vacation mode is on, only Away runs.
+
+      # ---- Settings -------------------------------------------------------
+      - type: grid
+        cards:
+          - type: heading
+            heading: Settings
+            heading_style: title
+            icon: mdi:tune-variant
+          - type: tile
+            entity: script.moods_settings_usual
+            name: Put every setting back to Usual
+            icon: mdi:backup-restore
+            hide_state: true
+            vertical: false
+            grid_options:
+              columns: 12
+            tap_action:
+              action: perform-action
+              perform_action: script.moods_settings_usual
+              confirmation:
+                text: >-
+                  Put every mood and both phones back to Usual? The house does
+                  not change until a mood is next set.
+            icon_tap_action:
+              action: perform-action
+              perform_action: script.moods_settings_usual
+              confirmation:
+                text: >-
+                  Put every mood and both phones back to Usual? The house does
+                  not change until a mood is next set.
+            hold_action:
+              action: none
+          - type: markdown
+            text_only: true
+            content: >-
+              A change here is used the next time the mood is set; a mood that
+              is already on stays as it is. "Usual" is always how the mood
+              behaved before this page existed.
+
+              **Adding a mood:** one file in `packages/moods/` (see "How to add
+              a mood" in the Palm Moods `ha/README.md`). It appears on the
+              phones by itself. To tune it here, add an
+              `input_select.moods_<slug>_look` in `moods_settings.yaml` whose
+              first option is "Usual (...)" with its built-in values, a
+              section on this page, and its button under "Set a mood" (the
+              buttons are listed by hand).
+
+  # =================================================================== Phones
+  - title: Phones
+    path: phones
+    type: sections
+    max_columns: 2
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: Bedroom Palm
+            heading_style: title
+            icon: mdi:bed-outline
+          - type: tile
+            entity: input_select.moods_panel_bedroom_night_hours
+            name: Night hours
+            icon: mdi:weather-night
+            hide_state: true
+            features_position: bottom
+            features:
+              - type: select-options
+            grid_options:
+              columns: 12
+          - type: tile
+            entity: input_select.moods_panel_bedroom_screen
+            name: Screen by day
+            icon: mdi:brightness-6
+            hide_state: true
+            features_position: bottom
+            features:
+              - type: select-options
+            grid_options:
+              columns: 12
+      - type: grid
+        cards:
+          - type: heading
+            heading: Living room Palm
+            heading_style: title
+            icon: mdi:sofa-outline
+          - type: tile
+            entity: input_select.moods_panel_living_room_night_hours
+            name: Night hours
+            icon: mdi:weather-night
+            hide_state: true
+            features_position: bottom
+            features:
+              - type: select-options
+            grid_options:
+              columns: 12
+          - type: tile
+            entity: input_select.moods_panel_living_room_screen
+            name: Screen by day
+            icon: mdi:brightness-6
+            hide_state: true
+            features_position: bottom
+            features:
+              - type: select-options
+            grid_options:
+              columns: 12
+      - type: grid
+        cards:
+          - type: heading
+            heading: How the phones use these
+            heading_style: subtitle
+          - type: markdown
+            text_only: true
+            content: >-
+              A phone picks up a change within a second or two. At night its
+              face is red-shifted, still and as dark as the screen goes.
+              "This phone's own hours" are the ones it was set up with (22:00
+              to 07:00 unless they were changed then). "No night hours" turns
+              the clock off. Whatever is chosen, a phone also goes to night in
+              a dark room, and on the Lights Out face while the room is not
+              lit (a phone with no light sensor counts as not lit).
+
+              "Screen by day" makes the day face and the deck dimmer or
+              brighter than usual; night is not affected. A phone still on an
+              older app ignores both settings.
+
+  # ================================================================== Devices
+  - title: Devices
+    path: devices
+    type: sections
+    max_columns: 2
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: Which devices each role uses
+            heading_style: title
+            icon: mdi:lightbulb-group-outline
+          - type: markdown
+            text_only: true
+            content: |-
+              {%- set ns = namespace(n=0, bad=0, lines=[]) %}
+              {%- for r in (states.light | list) + (states.switch | list) + (states.media_player | list)
+                    if r.object_id.startswith('role_') and r.entity_id != 'light.role_all_lights' %}
+              {%- set label = r.name | replace('Role: ', '') %}
+              {%- set members = r.attributes.entity_id | default([]) %}
+              {%- set ns2 = namespace(parts=[]) %}
+              {%- for m in members %}
+              {%- set ns.n = ns.n + 1 %}
+              {%- set st = states(m) %}
+              {%- if st in ['unknown', 'unavailable'] %}
+              {%- set ns.bad = ns.bad + 1 %}
+              {%- set ns2.parts = ns2.parts + [(state_attr(m, 'friendly_name') or m) ~ ' (**not answering**)'] %}
+              {%- else %}
+              {%- set ns2.parts = ns2.parts + [(state_attr(m, 'friendly_name') or m) ~ ' (' ~ st ~ ')'] %}
+              {%- endif %}
+              {%- endfor %}
+              {%- set ns.lines = ns.lines + ['- **' ~ label ~ '**: ' ~ (ns2.parts | join(', ') if ns2.parts else '*nothing yet; moods skip it*')] %}
+              {%- endfor %}
+              {%- if ns.lines | count == 0 %}
+              No roles found. Is the Palm Moods package loaded?
+              {%- else %}
+              {%- if ns.bad == 0 %}
+              All {{ ns.n }} devices in the roles are answering.
+              {%- else %}
+              {{ ns.bad }} of {{ ns.n }} devices are not answering. Moods skip them and carry on.
+              {%- endif %}
+
+              {{ ns.lines | join('\n') }}
+              {%- endif %}
+      - type: grid
+        cards:
+          - type: heading
+            heading: Bed, TV and heating
+            heading_style: title
+            icon: mdi:bed-outline
+          - type: tile
+            entity: binary_sensor.role_bed
+            name: Bed is cooling
+            icon: mdi:snowflake-thermometer
+            grid_options:
+              columns: 12
+          - type: tile
+            entity: binary_sensor.role_bedroom_tv
+            name: Bedroom TV
+            icon: mdi:television
+            grid_options:
+              columns: 12
+          - type: tile
+            entity: binary_sensor.role_thermostat_eco
+            name: Heating in eco
+            icon: mdi:leaf
+            grid_options:
+              columns: 12
+          - type: markdown
+            text_only: true
+            content: >-
+              Moods name rooms (roles), never devices. To add, swap or remove a
+              device, edit its role in `packages/moods/moods_roles.yaml` (in
+              git), then reload groups. No mood changes.

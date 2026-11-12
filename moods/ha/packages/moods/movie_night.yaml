@@ -1,0 +1,97 @@
+# Mood: Movie Night. "TV on. One lamp, deep red. Everything else off." (Bedroom)
+# "Everything else" means the rest of the bedroom: other bedroom lamps off and
+# any bedroom music paused (the bedroom speaker is also the TV's soundbar).
+# Names roles only; devices live in moods_roles.yaml.
+
+homeassistant:
+  customize:
+    script.mood_movie_night:
+      mood: true
+      mood_slug: movie_night
+      mood_name: Movie Night
+      mood_tagline: TV on. One lamp, deep red. Everything else off.
+      mood_order: 20
+      mood_scope: Bedroom
+      mood_panels: [bedroom]
+      mood_glyph: curtain
+      mood_palette:
+        base: "#0a0304"
+        glows: ["#a81618", "#580a16", "#2e4684"]   # deep red lamp, oxblood band, faint TV blue
+        accent: "#e8574c"
+        ink: "#f6e0da"
+        # the approved Ember sky: [kind, colour, alpha, width, height, x%, y%, drift]
+        sky:
+          - [band, "#580a16", 0.5, 640, 320, 50, 36, 2]
+          - [lamp, "#a81618", 0.62, 580, 480, 50, 100, 1]
+          - [glow, "#2e4684", 0.26, 360, 360, 4, 4, 3]
+      mood_status: TV on
+      mood_night: false
+      mood_holds_outdoor: false
+      mood_lights_outdoor: false
+      mood_touches:
+        - { label: Lights, entity: light.role_bedroom_movie_lamp, expect: "on" }
+        - { label: TV, entity: binary_sensor.role_bedroom_tv, expect: "on" }
+
+script:
+  mood_movie_night:
+    alias: "Mood: Movie Night"
+    icon: mdi:movie-open-outline
+    mode: restart
+    sequence:
+      # Keep these two steps first in every mood. The slug comes from this
+      # script's own name (script.mood_<slug>), so a copied file cannot
+      # record itself under the wrong mood.
+      - action: script.mood_begin
+        data:
+          slug: "{{ this.entity_id | replace('script.mood_', '') }}"
+        response_variable: begin
+      - condition: template
+        value_template: "{{ begin is mapping and begin.proceed | default(false) }}"
+      # Settings (moods_settings.yaml, the "Moods" dashboard): the whole
+      # numbers in the option chosen there, all checked together here. They
+      # are used only if every one is a plain whole number, there are exactly
+      # as many as expected and each is in range; otherwise ALL of today's
+      # values (missing, unknown, unavailable, signs, decimals, any other
+      # text). The helper id comes from this script's own name, so a copied
+      # mood file finds no setting and keeps its built-in values.
+      - variables:
+          look: >-
+            {% set t = states('input_select.moods_' ~ this.entity_id | replace('script.mood_', '') ~ '_look')
+                    | regex_findall('-?[0-9]+(?:[.][0-9]+)?') %}
+            {{ t | map('int') | list if t | select('match', '^[0-9]+$') | list | count == t | count else [] }}
+          ok: "{{ look | count == 1 and 1 <= look[0] <= 20 }}"
+          lamp_pct: "{{ look[0] if ok else 6 }}"
+      - parallel:
+          - action: script.role_bedroom_tv_on
+            continue_on_error: true
+          - sequence:
+              # The one lamp first, so the room never goes fully dark...
+              - action: light.turn_on
+                target:
+                  entity_id: light.role_bedroom_movie_lamp
+                data:
+                  rgb_color: [150, 8, 6]
+                  brightness_pct: "{{ lamp_pct }}"
+                  transition: 3
+                continue_on_error: true
+              # ...then every other bedroom lamp off. Worked out from the two
+              # roles, so adding a bedroom lamp needs no edit here.
+              - variables:
+                  movie_lamps: "{{ state_attr('light.role_bedroom_movie_lamp', 'entity_id') or [] }}"
+                  other_lamps: >-
+                    {{ (state_attr('light.role_bedroom_lamps', 'entity_id') or [])
+                       | reject('in', movie_lamps) | list }}
+              - if:
+                  - condition: template
+                    value_template: "{{ other_lamps | count > 0 }}"
+                then:
+                  - action: light.turn_off
+                    target:
+                      entity_id: "{{ other_lamps }}"
+                    data:
+                      transition: 3
+                    continue_on_error: true
+          - action: script.role_music_stop
+            data:
+              speakers: media_player.role_bedroom_speaker
+            continue_on_error: true

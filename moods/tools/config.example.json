@@ -1,0 +1,9 @@
+{
+  "haUrl": "ws://192.168.1.10:8123/api/websocket",
+  "token": "PASTE-A-LONG-LIVED-ACCESS-TOKEN",
+  "panel": "bedroom",
+  "deviceName": "palm-bedroom",
+  "nightStart": "22:00",
+  "nightEnd": "07:00",
+  "tempEntity": "sensor.bedroom_temperature"
+}

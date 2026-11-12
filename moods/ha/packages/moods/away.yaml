@@ -1,0 +1,83 @@
+# Mood: Away. "Everything off. Heating to eco." (House)
+# - Every light off, the guest room lamp too (gently, and only if moods may touch
+#   the guest room). TV off, speakers paused, diffuser off, bed off,
+#   thermostat to eco.
+# - Never starts music.
+# - Does NOT turn on vacation mode (input_boolean.vacation_mode, if your house
+#   has one). Such a flag often arms alarms or a presence simulation too, and
+#   while it is on every other mood is refused, so a tap by someone still at
+#   home would lock the moods. To make Away also arm
+#   vacation mode, uncomment the marked step below.
+# Away is the one mood allowed while vacation mode is on.
+# Names roles only; devices live in moods_roles.yaml.
+
+homeassistant:
+  customize:
+    script.mood_away:
+      mood: true
+      mood_slug: away
+      mood_name: Away
+      mood_tagline: Everything off. Heating to eco.
+      mood_order: 80
+      mood_scope: House
+      mood_panels: [kitchen]
+      mood_glyph: key
+      mood_palette:
+        base: "#06080c"
+        glows: ["#2f4766", "#1d2a38", "#8a5a2a"]   # steel blue, slate, faint porch amber
+        accent: "#8fb3d9"
+      mood_status: House resting
+      mood_night: false
+      mood_holds_outdoor: false
+      mood_lights_outdoor: false
+      mood_touches:
+        - { label: Lights, entity: light.role_all_lights, expect: "off" }
+        - { label: Heat, entity: binary_sensor.role_thermostat_eco, expect: "on" }
+
+script:
+  mood_away:
+    alias: "Mood: Away"
+    icon: mdi:home-export-outline
+    mode: restart
+    sequence:
+      # Keep these two steps first in every mood. The slug comes from this
+      # script's own name (script.mood_<slug>), so a copied file cannot
+      # record itself under the wrong mood.
+      - action: script.mood_begin
+        data:
+          slug: "{{ this.entity_id | replace('script.mood_', '') }}"
+        response_variable: begin
+      - condition: template
+        value_template: "{{ begin is mapping and begin.proceed | default(false) }}"
+      - parallel:
+          - action: light.turn_off
+            target:
+              entity_id: light.role_all_lights
+            data:
+              transition: 2
+            continue_on_error: true
+          - action: script.role_guest_room_lamp_off
+            continue_on_error: true
+          - action: script.role_bedroom_tv_off
+            continue_on_error: true
+          - action: script.role_music_stop
+            data:
+              speakers: media_player.role_bedroom_speaker
+            continue_on_error: true
+          - action: script.role_music_stop
+            data:
+              speakers: media_player.role_house_speakers
+            continue_on_error: true
+          - action: switch.turn_off
+            target:
+              entity_id: switch.role_diffuser
+            continue_on_error: true
+          - action: script.role_bed_off
+            continue_on_error: true
+          - action: script.role_thermostat_eco
+            continue_on_error: true
+          # Optional: also arm Vacation mode (see the note at the top).
+          # - action: input_boolean.turn_on
+          #   target:
+          #     entity_id: input_boolean.vacation_mode
+          #   continue_on_error: true

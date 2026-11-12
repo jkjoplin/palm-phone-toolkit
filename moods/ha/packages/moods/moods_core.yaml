@@ -1,0 +1,381 @@
+# Palm Moods: core helpers.
+#
+# Holds what every mood shares: the current/previous mood, the begin step every
+# mood runs first, Undo, the refusal notice the phones show, the "outdoor
+# hold" signal other automations may check, and the package's one automation
+# (outdoor lights off late). No device entity ids live here (they are all in
+# moods_roles.yaml); this file only calls roles.
+#
+# Package name note: Home Assistant names a package after its file's basename
+# and requires it to be a slug, so this file cannot be called _core.yaml (HA
+# rejects "_core" and skips the whole file). Basenames must also be unique
+# across your whole packages/ tree, sub-folders included.
+#
+# Do not put a raw # inside unquoted YAML values (HA treats it as a comment).
+
+input_text:
+  house_mood:
+    name: House mood
+    icon: mdi:palette-outline
+    max: 64
+  house_mood_previous:
+    name: House mood (previous)
+    icon: mdi:history
+    max: 64
+  # Empty when the last mood request was accepted. When one is refused
+  # (vacation mode is on, or the mood is outside its own time window) it reads
+  # "<slug>|<ISO time>|<reason>", e.g. "focus|2026-01-01T12:00:00.000000+00:00|
+  # Vacation mode is on, so only Away can run." or "good_morning|...|Good
+  # Morning only runs between 05:00 and 11:00." The time (with microseconds)
+  # makes every refusal a new state, so the phones see repeats.
+  house_mood_notice:
+    name: House mood notice
+    icon: mdi:message-alert-outline
+    max: 255
+
+input_datetime:
+  house_mood_since:
+    name: House mood set at
+    icon: mdi:clock-outline
+    has_date: true
+    has_time: true
+
+template:
+  - binary_sensor:
+      # On while the current mood asks to keep the outdoor lights on
+      # (customize attribute mood_holds_outdoor: true; today only Hosting) and
+      # either:
+      #   - it was set less than HOLD_HOURS ago, or
+      #   - it was set at or after EVENING_FROM (local hour) and it is not yet
+      #     HOLD_UNTIL (local hour) the next morning.
+      # So a Hosting set at 18:00 holds until 01:00; one set at 14:00 holds
+      # until 18:00. Existing automations such as the 22:30 "Outdoor lights
+      # night off" can check it; see ha/README.md for the exact line.
+      # The mood is found by entity id (script.mood_<house_mood>), the same
+      # slug mood_begin writes, never by the mood_slug attribute: a copied
+      # file that kept a stale mood_slug cannot hold for the wrong mood.
+      - name: Mood outdoor hold
+        unique_id: moods_outdoor_hold
+        icon: mdi:lightbulb-on-outline
+        state: >-
+          {% set hold_hours = 4 %}
+          {% set evening_from = 15 %}
+          {% set hold_until = 1 %}
+          {% set cur = states('input_text.house_mood') %}
+          {% set holds = state_attr('script.mood_' ~ cur, 'mood_holds_outdoor') == true %}
+          {% set since = state_attr('input_datetime.house_mood_since', 'timestamp') | float(0) %}
+          {% if holds and since > 0 %}
+            {% set t = now() %}
+            {% set recent = (as_timestamp(t) - since) < hold_hours * 3600 %}
+            {% set since_day = since | timestamp_custom('%Y-%m-%d') %}
+            {% set since_hour = since | timestamp_custom('%H') | int %}
+            {% set today = t.strftime('%Y-%m-%d') %}
+            {% set yesterday = (t - timedelta(days=1)).strftime('%Y-%m-%d') %}
+            {% set evening = since_hour >= evening_from
+                 and (since_day == today
+                      or (since_day == yesterday and t.hour < hold_until)) %}
+            {{ recent or evening }}
+          {% else %}
+            false
+          {% endif %}
+
+script:
+  # Every mood calls this first, directly (not via script.turn_on), with
+  # response_variable, and continues only when the response says proceed.
+  mood_begin:
+    alias: "Moods: begin"
+    description: >-
+      Records a mood as current (moving the old one to previous) and stops any
+      other mood that is still running. Refuses every mood except away while
+      Vacation mode is on, and a mood with a time window (customize
+      attribute mood_window) outside that window, and says why in
+      input_text.house_mood_notice. When two moods are chosen at almost the
+      same moment, the newer one wins.
+    icon: mdi:palette-outline
+    mode: queued
+    max: 10
+    fields:
+      slug:
+        name: Mood slug
+        description: The mood's slug, e.g. wind_down
+        required: true
+        example: wind_down
+        selector:
+          text:
+    sequence:
+      - variables:
+          slug_clean: "{{ slug | default('') | string | trim | lower }}"
+          caller: "{{ 'script.mood_' ~ slug_clean }}"
+          current: "{{ states('input_text.house_mood') }}"
+          current_clean: "{{ '' if current in ['unknown', 'unavailable'] else current }}"
+          vacation_on: "{{ is_state('input_boolean.vacation_mode', 'on') }}"
+          refused:
+            proceed: false
+            reason: Vacation mode is on, so only Away can run.
+          superseded:
+            proceed: false
+            reason: A newer mood was chosen.
+          invalid:
+            proceed: false
+            reason: No mood slug was given.
+          accepted:
+            proceed: true
+            reason: ""
+      - if:
+          - condition: template
+            value_template: "{{ slug_clean == '' }}"
+        then:
+          - stop: No mood slug was given
+            response_variable: invalid
+      # Moods already running, other than the caller. A mood started after the
+      # caller is "newer": that happens when two moods are tapped within a few
+      # milliseconds and the newer one is still queued behind this begin. The
+      # newer choice wins, so the caller steps aside without writing anything.
+      - variables:
+          my_start: "{{ as_timestamp(state_attr(caller, 'last_triggered'), 0) }}"
+          others_running: >-
+            {{ states.script
+               | selectattr('attributes.mood', 'defined')
+               | selectattr('attributes.mood', 'eq', true)
+               | selectattr('state', 'eq', 'on')
+               | map(attribute='entity_id')
+               | reject('eq', caller)
+               | list }}
+          newer_running: >-
+            {%- set ns = namespace(ids=[]) %}
+            {%- for e in others_running %}
+              {%- if my_start > 0
+                    and as_timestamp(state_attr(e, 'last_triggered'), 0) > my_start %}
+                {%- set ns.ids = ns.ids + [e] %}
+              {%- endif %}
+            {%- endfor %}
+            {{- ns.ids }}
+      - if:
+          - condition: template
+            value_template: "{{ newer_running | count > 0 }}"
+        then:
+          - stop: A newer mood was chosen
+            response_variable: superseded
+      - if:
+          - condition: template
+            value_template: "{{ vacation_on and slug_clean != 'away' }}"
+        then:
+          # Tell the phones (and anyone watching) why nothing happened.
+          - action: input_text.set_value
+            target:
+              entity_id: input_text.house_mood_notice
+            data:
+              value: >-
+                {{ (slug_clean ~ '|' ~ now().isoformat()
+                    ~ '|' ~ refused.reason)[:255] }}
+            continue_on_error: true
+          - event: mood_refused
+            event_data:
+              slug: "{{ slug_clean }}"
+              reason: "{{ refused.reason }}"
+          - stop: Vacation mode is on; only Away may run
+            response_variable: refused
+      # A mood's own time window (after the vacation check, which stays first).
+      # Optional customize attribute on the mood's script, read from the
+      # caller's entity id (never by mood_slug):
+      #   mood_window: { from: "05:00", to: "11:00" }
+      # Local time, from inclusive, to exclusive; from later than to crosses
+      # midnight ("22:00" to "02:00"). Quote both times: unquoted 11:00 is a
+      # number in YAML 1.1. No attribute (or null) means no window.
+      # A malformed window (not a map, a missing or non-HH:MM time, from equal
+      # to to) never blocks the mood: it runs as if it had no window, and a
+      # warning goes to the Home Assistant log every time (system_log is always
+      # loaded, so this step cannot fail). ui/dev/lint.js rejects a malformed
+      # window before deploy.
+      - variables:
+          win_state: >-
+            {%- set w = state_attr(caller, 'mood_window') %}
+            {%- set hhmm = '^([01][0-9]|2[0-3]):[0-5][0-9]$' %}
+            {%- if w is none %}none
+            {%- elif not (w is mapping) %}bad
+            {%- else %}
+              {%- set f = w.get('from') %}
+              {%- set t = w.get('to') %}
+              {%- if not (f is string and t is string
+                          and f is match(hhmm) and t is match(hhmm) and f != t) %}bad
+              {%- else %}
+                {%- set hm = now().strftime('%H:%M') %}
+                {%- set inside = (f <= hm and hm < t) if f < t else (hm >= f or hm < t) %}
+                {{- 'in' if inside else 'out' }}
+              {%- endif %}
+            {%- endif %}
+          window_reason: >-
+            {%- set w = state_attr(caller, 'mood_window') %}
+            {%- set n = state_attr(caller, 'mood_name') %}
+            {%- set a = state_attr(caller, 'friendly_name') %}
+            {%- if n is string and n | trim != '' %}{% set name = n | trim %}
+            {%- elif a is string and a | trim != '' %}{% set name = a | replace('Mood: ', '') | trim %}
+            {%- else %}{% set name = slug_clean | replace('_', ' ') | title %}
+            {%- endif %}
+            {%- if w is mapping %}
+              {{- name ~ ' only runs between ' ~ w.get('from') ~ ' and ' ~ w.get('to') ~ '.' }}
+            {%- endif %}
+          outside_window:
+            proceed: false
+            reason: "{{ window_reason }}"
+      - if:
+          - condition: template
+            value_template: "{{ win_state == 'bad' }}"
+        then:
+          - action: system_log.write
+            data:
+              level: warning
+              logger: palm_moods.mood_begin
+              message: >-
+                {{ caller }} has a malformed mood_window
+                ({{ state_attr(caller, 'mood_window') }}); it should be
+                { from: "HH:MM", to: "HH:MM" } with two different times. The
+                mood runs as if it had no window.
+            continue_on_error: true
+      - if:
+          - condition: template
+            value_template: "{{ win_state == 'out' }}"
+        then:
+          - action: input_text.set_value
+            target:
+              entity_id: input_text.house_mood_notice
+            data:
+              value: >-
+                {{ (slug_clean ~ '|' ~ now().isoformat()
+                    ~ '|' ~ window_reason)[:255] }}
+            continue_on_error: true
+          - event: mood_refused
+            event_data:
+              slug: "{{ slug_clean }}"
+              reason: "{{ window_reason }}"
+          - stop: Outside the mood's time window
+            response_variable: outside_window
+      # Stop any other mood that is still mid-sequence (e.g. Good Morning's
+      # slow lamp rise) so it cannot undo the new mood a minute later.
+      - if:
+          - condition: template
+            value_template: "{{ others_running | count > 0 }}"
+        then:
+          - action: script.turn_off
+            target:
+              entity_id: "{{ others_running }}"
+            continue_on_error: true
+      - if:
+          - condition: template
+            value_template: "{{ states('input_text.house_mood_notice') != '' }}"
+        then:
+          - action: input_text.set_value
+            target:
+              entity_id: input_text.house_mood_notice
+            data:
+              value: ""
+            continue_on_error: true
+      # Leaving Away: take the thermostat back out of eco. Started, not
+      # awaited, so a slow cloud thermostat never delays the mood.
+      - if:
+          - condition: template
+            value_template: "{{ current_clean == 'away' and slug_clean != 'away' }}"
+        then:
+          - action: script.turn_on
+            target:
+              entity_id: script.role_thermostat_resume
+            continue_on_error: true
+      # Re-running the current mood keeps previous as it was, so Undo still
+      # goes back to the mood before.
+      - if:
+          - condition: template
+            value_template: "{{ slug_clean != current_clean }}"
+        then:
+          - action: input_text.set_value
+            target:
+              entity_id: input_text.house_mood_previous
+            data:
+              value: "{{ current_clean }}"
+          - action: input_text.set_value
+            target:
+              entity_id: input_text.house_mood
+            data:
+              value: "{{ slug_clean }}"
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.house_mood_since
+        data:
+          timestamp: "{{ now().timestamp() }}"
+        continue_on_error: true
+      - stop: Mood accepted
+        response_variable: accepted
+
+  mood_undo:
+    alias: "Moods: undo"
+    description: Re-runs the previous mood, if there is one.
+    icon: mdi:undo-variant
+    mode: single
+    sequence:
+      - variables:
+          previous: "{{ states('input_text.house_mood_previous') }}"
+          target_script: "{{ 'script.mood_' ~ previous }}"
+      - condition: template
+        value_template: >-
+          {{ previous not in ['', 'unknown', 'unavailable']
+             and states(target_script) not in ['unknown', 'unavailable'] }}
+      - action: script.turn_on
+        target:
+          entity_id: "{{ target_script }}"
+
+automation:
+  # Outdoor lights off late. The existing 22:30 "Outdoor lights night off" is
+  # not edited by this package; this adds the two cases it cannot cover:
+  #   1. The outdoor hold ends after 22:30 while the holding mood (Hosting) is
+  #      still current: turn the outdoor roles off then, as the night-off would
+  #      have. If the mood was changed instead, the new mood decides, so this
+  #      does nothing (e.g. Hosting -> Afterglow keeps Afterglow's patio).
+  #   2. At 01:00, if the current mood lit the outdoors (customize attribute
+  #      mood_lights_outdoor: true, e.g. Afterglow's patio) and no hold is on,
+  #      turn the outdoor roles off so they do not burn all night.
+  - id: moods_outdoor_lights_off_late
+    alias: "Moods: outdoor lights off late"
+    description: >-
+      Turns the patio, porch and driveway roles off when a mood's outdoor hold
+      ends after 22:30, or at 01:00 after a mood that lit the outdoors.
+    mode: queued
+    max: 3
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.mood_outdoor_hold
+        from: "on"
+        to: "off"
+        id: hold_ended
+      - trigger: time
+        at: "01:00:00"
+        id: late
+    conditions:
+      - condition: or
+        conditions:
+          - condition: and
+            conditions:
+              - condition: trigger
+                id: hold_ended
+              - condition: time
+                after: "22:30:00"
+                before: "05:00:00"
+              - condition: template
+                value_template: >-
+                  {{ state_attr('script.mood_' ~ states('input_text.house_mood'),
+                                'mood_holds_outdoor') == true }}
+          - condition: and
+            conditions:
+              - condition: trigger
+                id: late
+              - condition: template
+                value_template: >-
+                  {{ not is_state('binary_sensor.mood_outdoor_hold', 'on')
+                     and state_attr('script.mood_' ~ states('input_text.house_mood'),
+                                    'mood_lights_outdoor') == true }}
+    actions:
+      - action: light.turn_off
+        target:
+          entity_id:
+            - light.role_patio_lights
+            - light.role_porch_lights
+            - light.role_driveway_lights
+        continue_on_error: true

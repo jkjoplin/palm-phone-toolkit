@@ -1,0 +1,104 @@
+# Mood: Lights Out. "Lamps out, TV off. Bed cools. Sleep well." (House)
+# - Every light off except the guest room (All lights excludes it on purpose).
+# - Guest room: a very dim warm night light only if its lamp is off; if it is on,
+#   it is left alone. Opt-in: does nothing until "Moods may light the guest room
+#   night light" is turned on (it starts off), and never while "Moods leave
+#   the guest room alone" is on.
+# - Bedroom TV off, bedroom and house speakers paused, diffuser off.
+#   Guest room speakers are never touched.
+# - The bed cools. A bed base is never moved.
+# - Never starts music. Leaves the thermostat to its own schedule.
+# Names roles only; devices live in moods_roles.yaml.
+
+homeassistant:
+  customize:
+    script.mood_lights_out:
+      mood: true
+      mood_slug: lights_out
+      mood_name: Lights Out
+      mood_tagline: Lamps out, TV off. Bed cools. Sleep well.
+      mood_order: 40
+      mood_scope: House
+      mood_panels: [bedroom]
+      mood_glyph: moon
+      mood_palette:
+        base: "#04050b"
+        glows: ["#b05c28", "#242c64", "#143044"]   # one small amber ember, indigo band, deep teal
+        accent: "#a9b6e6"
+        ink: "#dfe3f2"
+        # the approved Ember sky: [kind, colour, alpha, width, height, x%, y%, drift]
+        sky:
+          - [band, "#242c64", 0.56, 640, 380, 50, 22, 2]
+          - [glow, "#143044", 0.4, 480, 480, 96, 64, 3]
+          - [lamp, "#b05c28", 0.24, 320, 240, 50, 103, 1]
+      mood_status: Bed cooling
+      mood_night: true
+      mood_holds_outdoor: false
+      mood_lights_outdoor: false
+      mood_touches:
+        - { label: Lights, entity: light.role_all_lights, expect: "off" }
+        - { label: Bed, entity: binary_sensor.role_bed, expect: "on" }
+
+script:
+  mood_lights_out:
+    alias: "Mood: Lights Out"
+    icon: mdi:weather-night
+    mode: restart
+    sequence:
+      # Keep these two steps first in every mood. The slug comes from this
+      # script's own name (script.mood_<slug>), so a copied file cannot
+      # record itself under the wrong mood.
+      - action: script.mood_begin
+        data:
+          slug: "{{ this.entity_id | replace('script.mood_', '') }}"
+        response_variable: begin
+      - condition: template
+        value_template: "{{ begin is mapping and begin.proceed | default(false) }}"
+      # Settings (moods_settings.yaml, the "Moods" dashboard): the whole
+      # numbers in the option chosen there, all checked together here. They
+      # are used only if every one is a plain whole number, there are exactly
+      # as many as expected and each is in range; otherwise ALL of today's
+      # values (missing, unknown, unavailable, signs, decimals, any other
+      # text). The helper id comes from this script's own name, so a copied
+      # mood file finds no setting and keeps its built-in values.
+      - variables:
+          look: >-
+            {% set t = states('input_select.moods_' ~ this.entity_id | replace('script.mood_', '') ~ '_bed')
+                    | regex_findall('-?[0-9]+(?:[.][0-9]+)?') %}
+            {{ t | map('int') | list if t | select('match', '^[0-9]+$') | list | count == t | count else [] }}
+          ok: "{{ look | count == 1 and 62 <= look[0] <= 70 }}"
+          bed_temp: "{{ look[0] if ok else 66 }}"
+      - parallel:
+          - action: light.turn_off
+            target:
+              entity_id: light.role_all_lights
+            data:
+              transition: 5
+            continue_on_error: true
+          # Started, not awaited: if this mood is restarted or replaced
+          # within 2 s, the night light still finishes its gentle re-send.
+          # It does nothing unless the guest room night light is opted in.
+          - action: script.turn_on
+            target:
+              entity_id: script.role_guest_room_night_light
+            continue_on_error: true
+          - action: script.role_bedroom_tv_off
+            continue_on_error: true
+          - action: script.role_music_stop
+            data:
+              speakers: media_player.role_bedroom_speaker
+            continue_on_error: true
+          - action: script.role_music_stop
+            data:
+              speakers: media_player.role_house_speakers
+            continue_on_error: true
+          - action: switch.turn_off
+            target:
+              entity_id: switch.role_diffuser
+            continue_on_error: true
+          - action: script.role_bed_cool
+            data:
+              # degrees F; 66 unless the dashboard says otherwise. The wrapper
+              # keeps it within 60 to 75 F whatever it is sent.
+              temperature: "{{ bed_temp }}"
+            continue_on_error: true

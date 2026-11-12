@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- An ember: a warm glow with a bright core. 108dp adaptive canvas, 66dp safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#5A2A12"
+        android:pathData="M54,24a30,30 0 1,0 0.01,0z" />
+    <path
+        android:fillColor="#B4571E"
+        android:pathData="M54,34a20,20 0 1,0 0.01,0z" />
+    <path
+        android:fillColor="#F2A65E"
+        android:pathData="M54,44a10,10 0 1,0 0.01,0z" />
+</vector>

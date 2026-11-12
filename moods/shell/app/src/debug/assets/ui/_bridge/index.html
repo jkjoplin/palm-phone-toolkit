@@ -1,0 +1,220 @@
+<!doctype html>
+<!--
+  Bridge test page for the Moods shell (debug builds only: src/debug/assets/ui/_bridge/).
+  Open it on a phone with:
+    adb shell am start -n com.palmmoods.shell/.KioskActivity --es page bridge
+  and go back to the real UI with --es page ui.
+  It shows Shell.getConfig() (token masked), live shell -> page events, and a button for
+  every Shell call, edge cases included. It also runs in a desktop browser, where it says
+  there is no shell. Recovery paths it cannot trigger (renderer death, a crash) have adb
+  commands in shell/README.md.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Moods bridge test</title>
+<script>
+  // Contract: the page defines window.__shell before DOMContentLoaded.
+  // Events that arrive before the DOM is ready are queued.
+  (function () {
+    var queue = [];
+    window.__shellQueue = queue;
+    window.__shell = function (type, payload) {
+      if (window.__onShell) window.__onShell(type, payload);
+      else queue.push([type, payload]);
+    };
+  })();
+</script>
+<style>
+  html, body { margin: 0; background: #0b0706; color: #f3e6d8; }
+  body {
+    font: 5vw/1.35 system-ui, sans-serif;
+    padding: 4vw;
+    -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  h1 { font-size: 7vw; margin: 0 0 2vw; color: #f2a65e; font-weight: 600; }
+  h2 { font-size: 4.2vw; margin: 5vw 0 1.5vw; color: #b4571e; text-transform: uppercase; letter-spacing: .08em; }
+  .tag { display: inline-block; font-size: 3.6vw; padding: .3em .7em; border-radius: 1em; background: #2a1810; color: #f2a65e; }
+  .tag.bad { background: #3a0f0f; color: #ff8a7a; }
+  pre {
+    margin: 0; padding: 3vw; background: #170b06; border-radius: 2vw;
+    font: 3.8vw/1.4 ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-all;
+  }
+  .grid { display: flex; flex-wrap: wrap; margin: -1vw; }
+  button {
+    flex: 1 0 40%; margin: 1vw; min-height: 13vw;
+    font: inherit; font-size: 4.4vw; color: #f3e6d8;
+    background: #2a1810; border: .4vw solid #5a2a12; border-radius: 2.5vw;
+  }
+  button:active { background: #5a2a12; }
+  button.on { border-color: #f2a65e; }
+  .row { display: flex; justify-content: space-between; padding: 1vw 0; border-bottom: .3vw solid #241510; }
+  .row b { color: #f2a65e; font-weight: 500; }
+  #log { max-height: 60vw; overflow: hidden; }
+</style>
+</head>
+<body>
+  <h1>Moods bridge test</h1>
+  <span id="mode" class="tag">checking</span>
+  <span id="hb" class="tag">heartbeat on</span>
+
+  <h2>Config</h2>
+  <pre id="config">-</pre>
+
+  <h2>Live</h2>
+  <div class="row"><span>sensor</span><b id="ev-sensor">-</b></div>
+  <div class="row"><span>power</span><b id="ev-power">-</b></div>
+  <div class="row"><span>net</span><b id="ev-net">-</b></div>
+  <div class="row"><span>lifecycle</span><b id="ev-lifecycle">-</b></div>
+  <div class="row"><span>page age</span><b id="age">0 s</b></div>
+
+  <h2>Brightness</h2>
+  <div class="grid">
+    <button data-b="0">0 (min)</button>
+    <button data-b="0.05">0.05</button>
+    <button data-b="0.3">0.3</button>
+    <button data-b="1">1</button>
+    <button data-b="-1">-1 (system)</button>
+    <button data-b="2">2 (clamps to 1)</button>
+    <button data-b="NaN">NaN (ignored)</button>
+  </div>
+
+  <h2>Haptics</h2>
+  <div class="grid">
+    <button data-h="tick">tick</button>
+    <button data-h="thump">thump</button>
+    <button data-h="error">error</button>
+    <button data-h="buzz">unknown kind</button>
+  </div>
+
+  <h2>Shell</h2>
+  <div class="grid">
+    <button id="b-config">getConfig</button>
+    <button id="b-beat">heartbeat once</button>
+    <button id="b-hb" class="on">auto heartbeat: on</button>
+    <button data-l="debug">log debug</button>
+    <button data-l="info">log info</button>
+    <button data-l="warn">log warn</button>
+    <button data-l="error">log error</button>
+    <button id="b-reload">reload</button>
+    <button id="b-settings">openSettings</button>
+  </div>
+
+  <h2>Event log</h2>
+  <pre id="log"></pre>
+
+<script>
+  (function () {
+    var shell = window.Shell || null;
+    var started = Date.now();
+    var lines = [];
+    // Kept across reloads, so turning it off lets the watchdog go reload, reload, rebuild,
+    // then back off. localStorage can be missing or throw; then it just resets to on.
+    var BEAT_KEY = "moodsBridge.autoBeat";
+    var autoBeat = true;
+    try { autoBeat = window.localStorage.getItem(BEAT_KEY) !== "off"; } catch (e) { autoBeat = true; }
+
+    function $(id) { return document.getElementById(id); }
+
+    function log(text) {
+      var t = new Date().toTimeString().slice(0, 8);
+      lines.unshift(t + "  " + text);
+      if (lines.length > 14) lines.length = 14;
+      $("log").textContent = lines.join("\n");
+    }
+
+    function call(name, args) {
+      if (!shell) { log("no shell: " + name + "(" + (args || []).join(", ") + ")"); return undefined; }
+      try {
+        var r = shell[name].apply(shell, args || []);
+        log(name + "(" + (args || []).map(JSON.stringify).join(", ") + ")");
+        return r;
+      } catch (e) {
+        log("ERROR " + name + ": " + e.message);
+        return undefined;
+      }
+    }
+
+    function showConfig() {
+      if (!shell) {
+        $("mode").textContent = "no shell (browser)";
+        $("mode").className = "tag bad";
+        $("config").textContent = "window.Shell is missing";
+        return;
+      }
+      var raw = call("getConfig");
+      try {
+        var cfg = JSON.parse(raw);
+        var shown = {};
+        Object.keys(cfg).forEach(function (k) { shown[k] = cfg[k]; });
+        if (shown.token) shown.token = shown.token.slice(0, 4) + "… (" + shown.token.length + " chars)";
+        $("config").textContent = JSON.stringify(shown, null, 2);
+        $("mode").textContent = cfg.mock ? "shell: mock (no config)" : "shell: configured";
+        $("mode").className = cfg.mock ? "tag bad" : "tag";
+      } catch (e) {
+        $("config").textContent = "getConfig did not return JSON: " + e.message;
+      }
+    }
+
+    function fmt(type, p) {
+      if (type === "sensor") return "lux " + p.lux + ", near " + p.near;
+      if (type === "power") return p.level + "%, " + p.tempC + " °C, " +
+        (p.charging ? "charging" : "not charging") + ", " + (p.plugged ? "plugged" : "unplugged");
+      if (type === "net") return (p.wifi ? "wifi" : "no wifi") + ", rssi " + p.rssi;
+      if (type === "lifecycle") return p.state;
+      return JSON.stringify(p);
+    }
+
+    window.__onShell = function (type, payload) {
+      var el = $("ev-" + type);
+      if (el) el.textContent = fmt(type, payload);
+      log("<- " + type + " " + JSON.stringify(payload));
+    };
+    window.__shellQueue.splice(0).forEach(function (e) { window.__onShell(e[0], e[1]); });
+
+    Array.prototype.forEach.call(document.querySelectorAll("[data-b]"), function (b) {
+      b.addEventListener("click", function () { call("setBrightness", [parseFloat(b.getAttribute("data-b"))]); });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll("[data-h]"), function (b) {
+      b.addEventListener("click", function () { call("haptic", [b.getAttribute("data-h")]); });
+    });
+    $("b-config").addEventListener("click", showConfig);
+    $("b-beat").addEventListener("click", function () { call("heartbeat"); });
+    function showBeat() {
+      $("b-hb").textContent = "auto heartbeat: " + (autoBeat ? "on" : "off");
+      $("b-hb").className = autoBeat ? "on" : "";
+      $("hb").textContent = autoBeat ? "heartbeat on" : "heartbeat OFF (kept across reloads)";
+      $("hb").className = autoBeat ? "tag" : "tag bad";
+    }
+    $("b-hb").addEventListener("click", function () {
+      autoBeat = !autoBeat;
+      try { window.localStorage.setItem(BEAT_KEY, autoBeat ? "on" : "off"); } catch (e) { log("localStorage unavailable"); }
+      showBeat();
+    });
+    showBeat();
+    Array.prototype.forEach.call(document.querySelectorAll("[data-l]"), function (b) {
+      b.addEventListener("click", function () {
+        var level = b.getAttribute("data-l");
+        call("log", [level, "bridge test page: " + level]);
+      });
+    });
+    $("b-reload").addEventListener("click", function () { call("reload"); });
+    $("b-settings").addEventListener("click", function () { call("openSettings"); });
+
+    // Contract: heartbeat every 5 s. Turn it off to watch the watchdog reload the page.
+    setInterval(function () {
+      if (autoBeat && shell) shell.heartbeat();
+    }, 5000);
+    setInterval(function () {
+      $("age").textContent = Math.round((Date.now() - started) / 1000) + " s";
+    }, 1000);
+
+    showConfig();
+    log("page loaded");
+  })();
+</script>
+</body>
+</html>

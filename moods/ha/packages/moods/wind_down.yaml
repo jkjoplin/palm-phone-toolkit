@@ -1,0 +1,84 @@
+# Mood: Wind Down. "Lamps low and warm. Diffuser on. Settle in." (Bedroom)
+# Music: the role_music_play step stays, silent until moods_music.yaml has a
+# media_id for wind_down; the card does not promise music.
+# Names roles only; devices live in moods_roles.yaml, music in moods_music.yaml.
+
+homeassistant:
+  customize:
+    script.mood_wind_down:
+      mood: true
+      mood_slug: wind_down
+      mood_name: Wind Down
+      mood_tagline: Lamps low and warm. Diffuser on. Settle in.
+      mood_order: 10
+      mood_scope: Bedroom
+      mood_panels: [bedroom]
+      mood_glyph: candle
+      mood_palette:
+        base: "#130905"
+        glows: ["#d6742c", "#80341e", "#604670"]   # amber lamp, rose-copper band, dusk violet
+        accent: "#f2a65e"
+        ink: "#f8e8d4"
+        # the approved Ember sky: [kind, colour, alpha, width, height, x%, y%, drift]
+        sky:
+          - [band, "#80341e", 0.38, 640, 300, 50, 30, 2]
+          - [lamp, "#d6742c", 0.54, 640, 520, 50, 96, 1]
+          - [glow, "#604670", 0.14, 380, 380, 94, 2, 3]
+      mood_status: Diffuser on
+      mood_night: false
+      mood_holds_outdoor: false
+      mood_lights_outdoor: false
+      mood_touches:
+        - { label: Lights, entity: light.role_bedroom_lamps, expect: "on" }
+        - { label: Scent, entity: switch.role_diffuser, expect: "on" }
+        # Uncomment once wind_down has a media_id in moods_music.yaml:
+        # - { label: Music, entity: media_player.role_bedroom_speaker, expect: "playing" }
+
+script:
+  mood_wind_down:
+    alias: "Mood: Wind Down"
+    icon: mdi:candle
+    mode: restart
+    sequence:
+      # Keep these two steps first in every mood. The slug comes from this
+      # script's own name (script.mood_<slug>), so a copied file cannot
+      # record itself under the wrong mood.
+      - action: script.mood_begin
+        data:
+          slug: "{{ this.entity_id | replace('script.mood_', '') }}"
+        response_variable: begin
+      - condition: template
+        value_template: "{{ begin is mapping and begin.proceed | default(false) }}"
+      # Settings (moods_settings.yaml, the "Moods" dashboard): the whole
+      # numbers in the option chosen there, all checked together here. They
+      # are used only if every one is a plain whole number, there are exactly
+      # as many as expected and each is in range; otherwise ALL of today's
+      # values (missing, unknown, unavailable, signs, decimals, any other
+      # text). The helper id comes from this script's own name, so a copied
+      # mood file finds no setting and keeps its built-in values.
+      - variables:
+          look: >-
+            {% set t = states('input_select.moods_' ~ this.entity_id | replace('script.mood_', '') ~ '_look')
+                    | regex_findall('-?[0-9]+(?:[.][0-9]+)?') %}
+            {{ t | map('int') | list if t | select('match', '^[0-9]+$') | list | count == t | count else [] }}
+          ok: "{{ look | count == 2 and 10 <= look[0] <= 50 and 2000 <= look[1] <= 3000 }}"
+          lamp_pct: "{{ look[0] if ok else 25 }}"
+          lamp_kelvin: "{{ look[1] if ok else 2200 }}"
+      - parallel:
+          - action: light.turn_on
+            target:
+              entity_id: light.role_bedroom_lamps
+            data:
+              color_temp_kelvin: "{{ lamp_kelvin }}"
+              brightness_pct: "{{ lamp_pct }}"
+              transition: 20
+            continue_on_error: true
+          - action: switch.turn_on
+            target:
+              entity_id: switch.role_diffuser
+            continue_on_error: true
+          - action: script.role_music_play
+            data:
+              mood: "{{ this.entity_id | replace('script.mood_', '') }}"
+              speakers: media_player.role_bedroom_speaker
+            continue_on_error: true

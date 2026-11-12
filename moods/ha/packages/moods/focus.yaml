@@ -1,0 +1,77 @@
+# Mood: Focus. "Office bright and cool. Nothing else changes." (Office)
+# Office lights full and cool. Leaves the rest of the house alone. No music:
+# the office has no speaker role (fill in moods_music.yaml and add a step here
+# if one is added).
+# Names roles only; devices live in moods_roles.yaml.
+
+homeassistant:
+  customize:
+    script.mood_focus:
+      mood: true
+      mood_slug: focus
+      mood_name: Focus
+      mood_tagline: Office bright and cool. Nothing else changes.
+      mood_order: 60
+      mood_scope: Office
+      mood_panels: [office]
+      mood_glyph: desk_lamp
+      mood_palette:
+        # A bright, cool work light: an azure daylight lamp, a steel-blue band and
+        # a faint page-white counter-light. Pale greys read as a grey room, so each
+        # glow carries real colour. The lamp is the deck's brightest layer (alpha x
+        # luminance about 89, under the UI's per-layer limit of 100).
+        base: "#0b1014"
+        glows: ["#3aa0e6", "#2a7cab", "#f0dcb0"]   # azure lamp, steel-blue band, page white
+        accent: "#a8dcf6"
+        ink: "#eef6fa"
+        # [kind, colour, alpha, width, height, x%, y%, drift]
+        sky:
+          - [band, "#2a7cab", 0.46, 640, 320, 50, 18, 2]
+          - [lamp, "#3aa0e6", 0.62, 660, 620, 50, 97, 1]
+          - [glow, "#f0dcb0", 0.16, 340, 340, 94, 4, 3]
+      mood_status: Office lit
+      mood_night: false
+      mood_holds_outdoor: false
+      mood_lights_outdoor: false
+      mood_touches:
+        - { label: Lights, entity: light.role_office_lights, expect: "on" }
+
+script:
+  mood_focus:
+    alias: "Mood: Focus"
+    icon: mdi:desk-lamp
+    mode: restart
+    sequence:
+      # Keep these two steps first in every mood. The slug comes from this
+      # script's own name (script.mood_<slug>), so a copied file cannot
+      # record itself under the wrong mood.
+      - action: script.mood_begin
+        data:
+          slug: "{{ this.entity_id | replace('script.mood_', '') }}"
+        response_variable: begin
+      - condition: template
+        value_template: "{{ begin is mapping and begin.proceed | default(false) }}"
+      # Settings (moods_settings.yaml, the "Moods" dashboard): the whole
+      # numbers in the option chosen there, all checked together here. They
+      # are used only if every one is a plain whole number, there are exactly
+      # as many as expected and each is in range; otherwise ALL of today's
+      # values (missing, unknown, unavailable, signs, decimals, any other
+      # text). The helper id comes from this script's own name, so a copied
+      # mood file finds no setting and keeps its built-in values.
+      - variables:
+          look: >-
+            {% set t = states('input_select.moods_' ~ this.entity_id | replace('script.mood_', '') ~ '_look')
+                    | regex_findall('-?[0-9]+(?:[.][0-9]+)?') %}
+            {{ t | map('int') | list if t | select('match', '^[0-9]+$') | list | count == t | count else [] }}
+          ok: "{{ look | count == 2 and 50 <= look[0] <= 100 and 4000 <= look[1] <= 6500 }}"
+          office_pct: "{{ look[0] if ok else 100 }}"
+          office_kelvin: "{{ look[1] if ok else 5000 }}"
+      - parallel:
+          - action: light.turn_on
+            target:
+              entity_id: light.role_office_lights
+            data:
+              color_temp_kelvin: "{{ office_kelvin }}"
+              brightness_pct: "{{ office_pct }}"
+              transition: 2
+            continue_on_error: true
